@@ -25,7 +25,10 @@ Required options:
     -o, --output DIR           Output base directory
 
 Optional options:
-    -t, --threads INT          Number of CPU threads (default: 4)
+    -t, --threads INT          Total CPU threads available (default: 4)
+                               Automatically split across parallel datasets:
+                               per-dataset threads = threads ÷ max-parallel
+    --max-parallel INT         Number of datasets to process in parallel (default: 2)
     --col-bioproject NAME      Column for BioProject/Dataset ID (default: 'Data-Bioproject')
     --col-sra NAME             Column for SRA accession (default: 'Data-SRA')
     -h, --help                 Show this help message
@@ -40,6 +43,7 @@ EOF
 METADATA=""
 OUTPUT=""
 THREADS=4
+MAX_PARALLEL=2
 COL_BIOPROJECT="Data-Bioproject"
 COL_SRA="Data-SRA"
 
@@ -52,6 +56,7 @@ while [[ $# -gt 0 ]]; do
         -m|--metadata) METADATA="$2"; shift 2 ;;
         -o|--output) OUTPUT="$2"; shift 2 ;;
         -t|--threads) THREADS="$2"; shift 2 ;;
+        --max-parallel) MAX_PARALLEL="$2"; shift 2 ;;
         --col-bioproject) COL_BIOPROJECT="$2"; shift 2 ;;
         --col-sra) COL_SRA="$2"; shift 2 ;;
         -h|--help) show_help; exit 0 ;;
@@ -62,6 +67,12 @@ done
 # Validate thread count is a positive integer
 if ! [[ "$THREADS" =~ ^[1-9][0-9]*$ ]]; then
     echo "Error: --threads must be a positive integer, got '$THREADS'"
+    exit 1
+fi
+
+# Validate max-parallel count
+if ! [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Error: --max-parallel must be a positive integer, got '$MAX_PARALLEL'"
     exit 1
 fi
 
@@ -89,7 +100,13 @@ if [[ -z "$OUTPUT" ]]; then
     OUTPUT=$(dirname "$METADATA")
 fi
 
-export cpu=$THREADS
+# Compute per-dataset thread count: total threads ÷ max parallel datasets
+THREADS_PER_DATASET=$(( THREADS / MAX_PARALLEL ))
+if [[ "$THREADS_PER_DATASET" -lt 1 ]]; then
+    THREADS_PER_DATASET=1
+fi
+export THREADS_PER_DATASET
+export cpu=$THREADS_PER_DATASET
 
 # Source function library (AmpliconFunction.sh contains all processing functions)
 if [[ -f "${SCRIPTS}/AmpliconFunction.sh" ]]; then
@@ -150,15 +167,19 @@ summary_csv="${OUTPUT}/summary.csv"
 : > "$skipped_log"
 : > "$low_quality_log"
 
+echo "Threads: $THREADS total, $MAX_PARALLEL parallel datasets, $THREADS_PER_DATASET threads per dataset"
+
+running_jobs=0
+
 for i in "${!Dataset_ID_sets[@]}"; do
     dataset_ID="${Dataset_ID_sets[$i]}"
     dataset_path="${OUTPUT}/${dataset_ID}"
     sra_file_name="${dataset_ID}_sra.txt"
-    platform="Unknown" 
+    platform="Unknown"
 
     echo "----------------------------------------"
     echo "Dataset $((i+1))/${#Dataset_ID_sets[@]}: $dataset_ID"
-    
+
     # Check if already processed
     if [ -f "${dataset_path}/${dataset_ID}-final-rep-seqs.qza" ]; then
         echo "✓ Already processed. Skipping."
@@ -166,7 +187,13 @@ for i in "${!Dataset_ID_sets[@]}"; do
         continue
     fi
 
-    set +e
+    # Wait for a slot if running at max parallel capacity
+    if [[ "$MAX_PARALLEL" -gt 1 ]] && [[ "$running_jobs" -ge "$MAX_PARALLEL" ]]; then
+        wait -n 2>/dev/null || true
+        running_jobs=$((running_jobs - 1))
+    fi
+
+    _process_one_dataset() {
     (
         set -e
         cd "$dataset_path"
@@ -193,72 +220,136 @@ for i in "${!Dataset_ID_sets[@]}"; do
         ori_fastq_path="${dataset_path}/ori_fastq"
 
         if [[ "$platform" == "ILLUMINA" ]]; then
-            # ── Step A: Download ──
-            echo ">>> Downloading SRA data..."
-            if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
-                echo "Error: Download failed for dataset $dataset_ID" >&2
-                exit 1
+            fastp_path="${dataset_path}/tmp/step_02_fastp"
+            n_srr=$(wc -l < "${sra_file_name}" | tr -d ' ')
+            quality_cache="${dataset_path}/${dataset_ID}_quality_status.txt"
+
+            # ── Resume checkpoint: check if fastp data (primers already removed) is intact ──
+            n_fastp_fq=0
+            if [[ -d "$fastp_path" ]]; then
+                n_fastp_fq=$(find "$fastp_path" -type f -name '*.fastq*' | wc -l)
             fi
 
-            # Count raw reads before any processing
-            Common_CountRawReads "$dataset_path" "$sra_file_name"
+            if [[ "$n_fastp_fq" -gt 0 ]] && \
+               [[ "$n_fastp_fq" -eq "$n_srr" || "$n_fastp_fq" -eq $(( n_srr * 2 )) ]]; then
+                # fastp data is intact — resume from here
+                echo ">>> Resuming: found $n_fastp_fq fastp files for $n_srr SRR accessions"
 
-            # Detect PE/SE after download (check for _1/_2 paired files)
-            r1_count=$(find "$ori_fastq_path" -type f -name '*_1.fastq*' 2>/dev/null | wc -l)
-            r2_count=$(find "$ori_fastq_path" -type f -name '*_2.fastq*' 2>/dev/null | wc -l)
-            if [ "$r1_count" -gt 0 ] && [ "$r1_count" -eq "$r2_count" ]; then
-                sequence_type="paired"
+                # Clean up all downstream intermediate directories
+                rm -rf "${dataset_path}/tmp/step_02c_degraded_preprocess"
+                rm -rf "${dataset_path}/tmp/step_03_qza_import"
+                rm -rf "${dataset_path}/tmp/step_04_qza_import_QualityFilter"
+                rm -rf "${dataset_path}/tmp/step_05_dedupicate"
+                rm -rf "${dataset_path}/tmp/step_05_denoise"
+                rm -rf "${dataset_path}/tmp/step_06_vsearch_cli"
+                rm -rf "${dataset_path}/tmp/step_06_ChimerasRemoval"
+                rm -rf "${dataset_path}/tmp/step_07_cluster"
+                rm -rf "${dataset_path}/tmp/temp_file"
+
+                # Detect PE/SE from fastp files
+                r1_fastp=$(find "$fastp_path" -type f -name '*_1.fastq*' 2>/dev/null | wc -l)
+                r2_fastp=$(find "$fastp_path" -type f -name '*_2.fastq*' 2>/dev/null | wc -l)
+                if [ "$r1_fastp" -gt 0 ] && [ "$r1_fastp" -eq "$r2_fastp" ]; then
+                    sequence_type="paired"
+                else
+                    sequence_type="single"
+                fi
+                echo "Sequence type: ${sequence_type^^}"
+                export sequence_type
+
+                # Read cached quality status or re-check
+                if [[ -f "$quality_cache" ]]; then
+                    quality_status=$(cat "$quality_cache")
+                    echo "Quality status (cached): $quality_status"
+                else
+                    echo ">>> Checking quality score diversity..."
+                    quality_result=$(python3 "${SCRIPTS}/py_16s.py" check_quality_diversity \
+                        --input_dir "$fastp_path" --n_samples 3 --n_reads 1000)
+                    quality_status=$(echo "$quality_result" | grep "^QUALITY_STATUS=" | cut -d= -f2)
+                    echo "$quality_status" > "$quality_cache"
+                    echo "Quality status: $quality_status"
+                fi
             else
-                sequence_type="single"
-            fi
-            echo "Sequence type: ${sequence_type^^}"
-            export sequence_type
+                # No valid fastp checkpoint — full run from scratch
+                if [[ -d "${dataset_path}/tmp" ]]; then
+                    echo ">>> No valid fastp checkpoint ($n_fastp_fq files, expected $n_srr or $((n_srr*2))). Cleaning and re-running..."
+                    rm -rf "${dataset_path}/tmp"
+                    rm -rf "${dataset_path}/ori_fastq"
+                fi
 
-            # ── Quality Score Diversity Check (first 3 samples) ──
-            echo ">>> Checking quality score diversity..."
-            quality_result=$(python3 "${SCRIPTS}/py_16s.py" check_quality_diversity \
-                --input_dir "$ori_fastq_path" --n_samples 3 --n_reads 1000)
-            quality_status=$(echo "$quality_result" | grep "^QUALITY_STATUS=" | cut -d= -f2)
-            echo "Quality status: $quality_status"
+                # ── Step A: Download ──
+                echo ">>> Downloading SRA data..."
+                if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
+                    echo "Error: Download failed for dataset $dataset_ID" >&2
+                    exit 1
+                fi
 
-            # ── Step B: Remove sequencing adapters with fastp ──
-            adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
-            mkdir -p "$adapter_removed_path"
+                # Count raw reads before any processing
+                Common_CountRawReads "$dataset_path" "$sra_file_name"
 
-            if [[ "$sequence_type" == "paired" ]]; then
-                # PE: find R1/R2 pairs and run fastp in PE mode
-                # Output filenames are normalised to _1/_2 so that all
-                # downstream tools (entropy_primer_detect, mk_manifest_PE,
-                # QIIME2 import) see a consistent naming convention.
-                pe_done=false
-                for r1 in "${ori_fastq_path}/"*_R1*.fastq*; do
-                    [[ -f "$r1" ]] || continue
-                    r2="${r1/_R1/_R2}"
-                    [[ -f "$r2" ]] || continue
-                    # Normalise _R1 → _1, _R2 → _2
-                    r1_out=$(basename "$r1"); r1_out="${r1_out/_R1/_1}"
-                    r2_out=$(basename "$r2"); r2_out="${r2_out/_R2/_2}"
-                    fastp -i "$r1" -I "$r2" \
-                          -o "${adapter_removed_path}/${r1_out}" \
-                          -O "${adapter_removed_path}/${r2_out}" \
-                          --detect_adapter_for_pe \
-                          --disable_quality_filtering \
-                          --disable_length_filtering \
-                          -w "$cpu" \
-                          -j "${adapter_removed_path}/fastp.json" \
-                          -h "${adapter_removed_path}/fastp.html"
-                    pe_done=true
-                done
-                if [[ "$pe_done" == false ]]; then
-                    # Fallback: files already use _1/_2 pattern
-                    for r1 in "${ori_fastq_path}/"*_1.fastq*; do
+                # Detect PE/SE after download (check for _1/_2 paired files)
+                r1_count=$(find "$ori_fastq_path" -type f -name '*_1.fastq*' 2>/dev/null | wc -l)
+                r2_count=$(find "$ori_fastq_path" -type f -name '*_2.fastq*' 2>/dev/null | wc -l)
+                if [ "$r1_count" -gt 0 ] && [ "$r1_count" -eq "$r2_count" ]; then
+                    sequence_type="paired"
+                else
+                    sequence_type="single"
+                fi
+                echo "Sequence type: ${sequence_type^^}"
+                export sequence_type
+
+                # ── Quality Score Diversity Check (first 3 samples) ──
+                echo ">>> Checking quality score diversity..."
+                quality_result=$(python3 "${SCRIPTS}/py_16s.py" check_quality_diversity \
+                    --input_dir "$ori_fastq_path" --n_samples 3 --n_reads 1000)
+                quality_status=$(echo "$quality_result" | grep "^QUALITY_STATUS=" | cut -d= -f2)
+                echo "$quality_status" > "$quality_cache"
+                echo "Quality status: $quality_status"
+
+                # ── Step B: Remove sequencing adapters with fastp ──
+                adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
+                mkdir -p "$adapter_removed_path"
+
+                if [[ "$sequence_type" == "paired" ]]; then
+                    pe_done=false
+                    for r1 in "${ori_fastq_path}/"*_R1*.fastq*; do
                         [[ -f "$r1" ]] || continue
-                        r2="${r1/_1.fastq/_2.fastq}"
+                        r2="${r1/_R1/_R2}"
                         [[ -f "$r2" ]] || continue
+                        r1_out=$(basename "$r1"); r1_out="${r1_out/_R1/_1}"
+                        r2_out=$(basename "$r2"); r2_out="${r2_out/_R2/_2}"
                         fastp -i "$r1" -I "$r2" \
-                              -o "${adapter_removed_path}/$(basename "$r1")" \
-                              -O "${adapter_removed_path}/$(basename "$r2")" \
+                              -o "${adapter_removed_path}/${r1_out}" \
+                              -O "${adapter_removed_path}/${r2_out}" \
                               --detect_adapter_for_pe \
+                              --disable_quality_filtering \
+                              --disable_length_filtering \
+                              -w "$cpu" \
+                              -j "${adapter_removed_path}/fastp.json" \
+                              -h "${adapter_removed_path}/fastp.html"
+                        pe_done=true
+                    done
+                    if [[ "$pe_done" == false ]]; then
+                        for r1 in "${ori_fastq_path}/"*_1.fastq*; do
+                            [[ -f "$r1" ]] || continue
+                            r2="${r1/_1.fastq/_2.fastq}"
+                            [[ -f "$r2" ]] || continue
+                            fastp -i "$r1" -I "$r2" \
+                                  -o "${adapter_removed_path}/$(basename "$r1")" \
+                                  -O "${adapter_removed_path}/$(basename "$r2")" \
+                                  --detect_adapter_for_pe \
+                                  --disable_quality_filtering \
+                                  --disable_length_filtering \
+                                  -w "$cpu" \
+                                  -j "${adapter_removed_path}/fastp.json" \
+                                  -h "${adapter_removed_path}/fastp.html"
+                        done
+                    fi
+                else
+                    for fq in "${ori_fastq_path}/"*.fastq*; do
+                        [[ -f "$fq" ]] || continue
+                        fastp -i "$fq" \
+                              -o "${adapter_removed_path}/$(basename "$fq")" \
                               --disable_quality_filtering \
                               --disable_length_filtering \
                               -w "$cpu" \
@@ -266,34 +357,23 @@ for i in "${!Dataset_ID_sets[@]}"; do
                               -h "${adapter_removed_path}/fastp.html"
                     done
                 fi
-            else
-                # SE: run fastp on each file
-                for fq in "${ori_fastq_path}/"*.fastq*; do
-                    [[ -f "$fq" ]] || continue
-                    fastp -i "$fq" \
-                          -o "${adapter_removed_path}/$(basename "$fq")" \
-                          --disable_quality_filtering \
-                          --disable_length_filtering \
-                          -w "$cpu" \
-                          -j "${adapter_removed_path}/fastp.json" \
-                          -h "${adapter_removed_path}/fastp.html"
-                done
+
+                # ── Step C: Entropy-based primer detection & trimming ──
+                mkdir -p "$fastp_path"
+
+                python3 "${SCRIPTS}/entropy_primer_detect.py" \
+                    -i "$adapter_removed_path" \
+                    -o "$fastp_path" || {
+                    echo "  ✗ Entropy primer detection failed"
+                    exit 1
+                }
+
+                # Delete original and intermediate fastq files to save space
+                rm -rf "$ori_fastq_path"
+                rm -rf "$adapter_removed_path"
             fi
 
-            # ── Step B: Entropy-based primer detection & trimming ──
-            fastp_path="${dataset_path}/tmp/step_02_fastp"
-            mkdir -p "$fastp_path"
-
-            python3 "${SCRIPTS}/entropy_primer_detect.py" \
-                -i "$adapter_removed_path" \
-                -o "$fastp_path" || {
-                echo "  ✗ Entropy primer detection failed"
-                exit 1
-            }
-
-            # Delete original and intermediate fastq files to save space
-            rm -rf "$ori_fastq_path"
-            rm -rf "$adapter_removed_path"
+            # ── From here: same flow regardless of resume or fresh run ──
 
             if [[ "$quality_status" == "degraded" ]]; then
                 # ── Degraded Quality Branch: VSEARCH pipeline ──
@@ -309,7 +389,8 @@ for i in "${!Dataset_ID_sets[@]}"; do
                     --output_dir "$degraded_path" \
                     --trim_front 15 --truncate_length 0 \
                     --max_n 1 \
-                    --sequence_type "$sequence_type"
+                    --sequence_type "$sequence_type" \
+                    --threads "$THREADS_PER_DATASET"
 
                 rm -rf "$fastp_path"
 
@@ -318,14 +399,13 @@ for i in "${!Dataset_ID_sets[@]}"; do
                 fastq_path="$degraded_path"
                 export fastq_path sequence_type
 
-                # ── QIIME2: import + QC + dereplicate ──
+                # ── Manifest (needed for relabel_reads_for_mapping + import) ──
                 Amplicon_Common_MakeManifestFileForQiime2
-                Amplicon_Common_ImportFastqToQiime2
-                Amplicon_DegradedQ_QualityControlForQZA
-                Amplicon_LS454_Deduplication
 
-                # ── Native vsearch: denoise + build OTU table ──
-                Amplicon_DegradedQ_ExportForVsearch
+                # ── Direct vsearch pipeline (bypasses QIIME2 intermediate steps) ──
+                # Replaces: ImportFastq → QualityControl → Deduplication → ExportForVsearch
+                # Quality/length/N filtering already done in degraded_quality_preprocess
+                Amplicon_DegradedQ_DirectDerep
                 Amplicon_DegradedQ_VsearchDenoise
                 Amplicon_DegradedQ_MapReadsToZotus
                 Amplicon_DegradedQ_ImportResults
@@ -409,47 +489,70 @@ with open(manifest_path, 'w') as f:
             fi
 
         elif [[ "$platform" == "LS454" ]]; then
-            # ── Step A: Download with normal prefetch + fasterq-dump (same as Illumina) ──
-            echo ">>> Downloading SRA data (454)..."
-            if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
-                echo "Error: Download failed for dataset $dataset_ID" >&2
-                exit 1
+            fastp_path="${dataset_path}/tmp/step_02_fastp"
+            n_srr=$(wc -l < "${sra_file_name}" | tr -d ' ')
+
+            # ── Resume checkpoint: check if fastp data is intact ──
+            n_fastp_fq=0
+            if [[ -d "$fastp_path" ]]; then
+                n_fastp_fq=$(find "$fastp_path" -type f -name '*.fastq*' | wc -l)
             fi
 
-            # Count raw reads before any processing
-            Common_CountRawReads "$dataset_path" "$sra_file_name"
+            if [[ "$n_fastp_fq" -gt 0 ]] && [[ "$n_fastp_fq" -eq "$n_srr" ]]; then
+                # 454 is always SE, so n_fastp_fq == n_srr
+                echo ">>> Resuming: found $n_fastp_fq fastp files for $n_srr SRR accessions"
+
+                # Clean up downstream directories
+                rm -rf "${dataset_path}/tmp/step_02b_adaptive_trim"
+                rm -rf "${dataset_path}/tmp/step_03_qza_import"
+                rm -rf "${dataset_path}/tmp/step_04_qza_import_QualityFilter"
+                rm -rf "${dataset_path}/tmp/step_05_dedupicate"
+                rm -rf "${dataset_path}/tmp/step_06_ChimerasRemoval"
+                rm -rf "${dataset_path}/tmp/step_07_cluster"
+                rm -rf "${dataset_path}/tmp/temp_file"
+            else
+                if [[ -d "${dataset_path}/tmp" ]]; then
+                    echo ">>> No valid fastp checkpoint ($n_fastp_fq files, expected $n_srr). Cleaning and re-running..."
+                    rm -rf "${dataset_path}/tmp"
+                    rm -rf "${dataset_path}/ori_fastq"
+                fi
+
+                echo ">>> Downloading SRA data (454)..."
+                if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
+                    echo "Error: Download failed for dataset $dataset_ID" >&2
+                    exit 1
+                fi
+
+                Common_CountRawReads "$dataset_path" "$sra_file_name"
+
+                adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
+                mkdir -p "$adapter_removed_path"
+
+                for fq in "${ori_fastq_path}/"*.fastq*; do
+                    [[ -f "$fq" ]] || continue
+                    fastp -i "$fq" \
+                          -o "${adapter_removed_path}/$(basename "$fq")" \
+                          --disable_quality_filtering \
+                          --disable_length_filtering \
+                          -w "$cpu" \
+                          -j "${adapter_removed_path}/fastp.json" \
+                          -h "${adapter_removed_path}/fastp.html"
+                done
+
+                mkdir -p "$fastp_path"
+                python3 "${SCRIPTS}/entropy_primer_detect.py" \
+                    -i "$adapter_removed_path" \
+                    -o "$fastp_path" || {
+                    echo "  ✗ Entropy primer detection failed"
+                    exit 1
+                }
+
+                rm -rf "$ori_fastq_path"
+                rm -rf "$adapter_removed_path"
+            fi
 
             sequence_type="single"
             export sequence_type
-
-            # ── Step B: Remove sequencing adapters with fastp (SE mode) ──
-            adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
-            mkdir -p "$adapter_removed_path"
-
-            for fq in "${ori_fastq_path}/"*.fastq*; do
-                [[ -f "$fq" ]] || continue
-                fastp -i "$fq" \
-                      -o "${adapter_removed_path}/$(basename "$fq")" \
-                      --disable_quality_filtering \
-                      --disable_length_filtering \
-                      -w "$cpu" \
-                      -j "${adapter_removed_path}/fastp.json" \
-                      -h "${adapter_removed_path}/fastp.html"
-            done
-
-            # ── Step C: Entropy-based primer detection & trimming (same as Illumina) ──
-            fastp_path="${dataset_path}/tmp/step_02_fastp"
-            mkdir -p "$fastp_path"
-
-            python3 "${SCRIPTS}/entropy_primer_detect.py" \
-                -i "$adapter_removed_path" \
-                -o "$fastp_path" || {
-                echo "  ✗ Entropy primer detection failed"
-                exit 1
-            }
-
-            rm -rf "$ori_fastq_path"
-            rm -rf "$adapter_removed_path"
 
             # ── Step D: Adaptive tail trimming (data-driven N removal) ──
             # Analyses per-position N frequency at 3' end, trims elevated-N
@@ -486,47 +589,64 @@ with open(manifest_path, 'w') as f:
             Amplicon_Common_FinalFilesCleaning
 
         elif [[ "$platform" == "ION_TORRENT" ]]; then
-            # ── Step A: Download with normal prefetch + fasterq-dump (same as 454) ──
-            echo ">>> Downloading SRA data (Ion Torrent)..."
-            if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
-                echo "Error: Download failed for dataset $dataset_ID" >&2
-                exit 1
+            fastp_path="${dataset_path}/tmp/step_02_fastp"
+            n_srr=$(wc -l < "${sra_file_name}" | tr -d ' ')
+
+            # ── Resume checkpoint: check if fastp data is intact ──
+            n_fastp_fq=0
+            if [[ -d "$fastp_path" ]]; then
+                n_fastp_fq=$(find "$fastp_path" -type f -name '*.fastq*' | wc -l)
             fi
 
-            # Count raw reads before any processing
-            Common_CountRawReads "$dataset_path" "$sra_file_name"
+            if [[ "$n_fastp_fq" -gt 0 ]] && [[ "$n_fastp_fq" -eq "$n_srr" ]]; then
+                echo ">>> Resuming: found $n_fastp_fq fastp files for $n_srr SRR accessions"
+                rm -rf "${dataset_path}/tmp/step_03_qza_import"
+                rm -rf "${dataset_path}/tmp/step_04_qza_import_QualityFilter"
+                rm -rf "${dataset_path}/tmp/step_05_denoise"
+                rm -rf "${dataset_path}/tmp/temp_file"
+            else
+                if [[ -d "${dataset_path}/tmp" ]]; then
+                    echo ">>> No valid fastp checkpoint ($n_fastp_fq files, expected $n_srr). Cleaning and re-running..."
+                    rm -rf "${dataset_path}/tmp"
+                    rm -rf "${dataset_path}/ori_fastq"
+                fi
+
+                echo ">>> Downloading SRA data (Ion Torrent)..."
+                if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
+                    echo "Error: Download failed for dataset $dataset_ID" >&2
+                    exit 1
+                fi
+
+                Common_CountRawReads "$dataset_path" "$sra_file_name"
+
+                adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
+                mkdir -p "$adapter_removed_path"
+
+                for fq in "${ori_fastq_path}/"*.fastq*; do
+                    [[ -f "$fq" ]] || continue
+                    fastp -i "$fq" \
+                          -o "${adapter_removed_path}/$(basename "$fq")" \
+                          --disable_quality_filtering \
+                          --disable_length_filtering \
+                          -w "$cpu" \
+                          -j "${adapter_removed_path}/fastp.json" \
+                          -h "${adapter_removed_path}/fastp.html"
+                done
+
+                mkdir -p "$fastp_path"
+                python3 "${SCRIPTS}/entropy_primer_detect.py" \
+                    -i "$adapter_removed_path" \
+                    -o "$fastp_path" || {
+                    echo "  ✗ Entropy primer detection failed"
+                    exit 1
+                }
+
+                rm -rf "$ori_fastq_path"
+                rm -rf "$adapter_removed_path"
+            fi
 
             sequence_type="single"
             export sequence_type
-
-            # ── Step B: Remove sequencing adapters with fastp (SE mode) ──
-            adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
-            mkdir -p "$adapter_removed_path"
-
-            for fq in "${ori_fastq_path}/"*.fastq*; do
-                [[ -f "$fq" ]] || continue
-                fastp -i "$fq" \
-                      -o "${adapter_removed_path}/$(basename "$fq")" \
-                      --disable_quality_filtering \
-                      --disable_length_filtering \
-                      -w "$cpu" \
-                      -j "${adapter_removed_path}/fastp.json" \
-                      -h "${adapter_removed_path}/fastp.html"
-            done
-
-            # ── Step C: Entropy-based primer detection & trimming (same as Illumina) ──
-            fastp_path="${dataset_path}/tmp/step_02_fastp"
-            mkdir -p "$fastp_path"
-
-            python3 "${SCRIPTS}/entropy_primer_detect.py" \
-                -i "$adapter_removed_path" \
-                -o "$fastp_path" || {
-                echo "  ✗ Entropy primer detection failed"
-                exit 1
-            }
-
-            rm -rf "$ori_fastq_path"
-            rm -rf "$adapter_removed_path"
 
             # ── Step D: QIIME2 Import → Quality filter → DADA2 denoise-pyro ──
             # Ion Torrent signal instability in the first ~10bp is handled by
@@ -547,36 +667,54 @@ with open(manifest_path, 'w') as f:
             continue
 
         elif [[ "$platform" == "PACBIO_SMRT" ]]; then
-            # ── Step A: Download ──
-            echo ">>> Downloading SRA data..."
-            if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
-                echo "Error: Download failed for dataset $dataset_ID" >&2
-                exit 1
+            adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
+            n_srr=$(wc -l < "${sra_file_name}" | tr -d ' ')
+
+            # ── Resume checkpoint: check if adapter-removed data is intact ──
+            # PacBio skips primer detection (handled by DADA2 denoise-ccs)
+            n_adapter_fq=0
+            if [[ -d "$adapter_removed_path" ]]; then
+                n_adapter_fq=$(find "$adapter_removed_path" -type f -name '*.fastq*' ! -name 'fastp.*' | wc -l)
             fi
 
-            # Count raw reads before any processing
-            Common_CountRawReads "$dataset_path" "$sra_file_name"
+            if [[ "$n_adapter_fq" -gt 0 ]] && [[ "$n_adapter_fq" -eq "$n_srr" ]]; then
+                echo ">>> Resuming: found $n_adapter_fq adapter-removed files for $n_srr SRR accessions"
+                rm -rf "${dataset_path}/tmp/step_03_qza_import"
+                rm -rf "${dataset_path}/tmp/step_04_qza_import_QualityFilter"
+                rm -rf "${dataset_path}/tmp/step_05_denoise"
+                rm -rf "${dataset_path}/tmp/temp_file"
+            else
+                if [[ -d "${dataset_path}/tmp" ]]; then
+                    echo ">>> No valid checkpoint ($n_adapter_fq files, expected $n_srr). Cleaning and re-running..."
+                    rm -rf "${dataset_path}/tmp"
+                    rm -rf "${dataset_path}/ori_fastq"
+                fi
+
+                echo ">>> Downloading SRA data..."
+                if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
+                    echo "Error: Download failed for dataset $dataset_ID" >&2
+                    exit 1
+                fi
+
+                Common_CountRawReads "$dataset_path" "$sra_file_name"
+
+                mkdir -p "$adapter_removed_path"
+                for fq in "${ori_fastq_path}/"*.fastq*; do
+                    [[ -f "$fq" ]] || continue
+                    fastp -i "$fq" \
+                          -o "${adapter_removed_path}/$(basename "$fq")" \
+                          --disable_quality_filtering \
+                          --disable_length_filtering \
+                          -w "$cpu" \
+                          -j "${adapter_removed_path}/fastp.json" \
+                          -h "${adapter_removed_path}/fastp.html"
+                done
+
+                rm -rf "$ori_fastq_path"
+            fi
 
             sequence_type="single"
             export sequence_type
-
-            # ── Step B: Remove sequencing adapters with fastp ──
-            adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
-            mkdir -p "$adapter_removed_path"
-
-            for fq in "${ori_fastq_path}/"*.fastq*; do
-                [[ -f "$fq" ]] || continue
-                fastp -i "$fq" \
-                      -o "${adapter_removed_path}/$(basename "$fq")" \
-                      --disable_quality_filtering \
-                      --disable_length_filtering \
-                      -w "$cpu" \
-                      -j "${adapter_removed_path}/fastp.json" \
-                      -h "${adapter_removed_path}/fastp.html"
-            done
-
-            # Clean up original FASTQ to save space
-            rm -rf "$ori_fastq_path"
 
             # ── Step B2: Read length check on first sample ──
             # Sample the first 1000 reads from the first FASTQ file to
@@ -668,13 +806,28 @@ with open('${DOCS_DIR}/1492R.fas') as f:
         echo "$(date '+%Y-%m-%d %H:%M:%S') - $dataset_ID - SUCCESS - Platform: $platform" >> "$success_log"
 
     )
-    rc=$?
-    set -e
-    if [[ $rc -ne 0 ]]; then
+    local _rc=$?
+    if [[ $_rc -ne 0 ]]; then
         echo "❌ Pipeline failed for $dataset_ID — skipping to next dataset"
         echo "$(date '+%Y-%m-%d %H:%M:%S') - $dataset_ID - FAILED" >> "$failed_log"
     fi
+    }
+
+    set +e
+    if [[ "$MAX_PARALLEL" -gt 1 ]]; then
+        _process_one_dataset &
+        running_jobs=$((running_jobs + 1))
+    else
+        _process_one_dataset
+    fi
+    set -e
 done
+
+# Wait for all remaining background jobs (parallel mode)
+if [[ "$MAX_PARALLEL" -gt 1 ]]; then
+    echo ">>> Waiting for remaining background datasets to finish..."
+    wait
+fi
 
 ################################################################################
 #                          FINAL SUMMARY                                       #
