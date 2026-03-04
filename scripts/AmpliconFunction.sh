@@ -102,10 +102,21 @@ Download_From_ENA() {
 
     echo "  [ENA] Base URL: $ena_dir"
 
-    # Try PE first (_1/_2), then SE (.fastq.gz), then PacBio subreads.
-    # Once PE pair is found, skip remaining file types.
+    # Determine which file patterns to try based on detected layout.
+    # First SRR: probe all patterns (PE → SE → subreads).
+    # Subsequent SRRs: use the layout detected from the first SRR.
+    local -a try_files
+    if [[ -n "$_ena_layout" ]]; then
+        case "$_ena_layout" in
+            paired)   try_files=("${srr}_1.fastq.gz" "${srr}_2.fastq.gz") ;;
+            single)   try_files=("${srr}.fastq.gz") ;;
+            subreads) try_files=("${srr}_subreads.fastq.gz") ;;
+        esac
+        echo "  [ENA] Using detected layout: $_ena_layout"
+    else
+        try_files=("${srr}_1.fastq.gz" "${srr}_2.fastq.gz" "${srr}.fastq.gz" "${srr}_subreads.fastq.gz")
+    fi
     # HTTP 404 means the file doesn't exist — skip immediately without retry.
-    local -a try_files=("${srr}_1.fastq.gz" "${srr}_2.fastq.gz" "${srr}.fastq.gz" "${srr}_subreads.fastq.gz")
     local downloaded_any=false
     local got_r1=false
     local got_r2=false
@@ -177,6 +188,17 @@ Download_From_ENA() {
     done
 
     if [[ "$downloaded_any" == true ]]; then
+        # Detect layout from first SRR and cache for subsequent accessions
+        if [[ -z "$_ena_layout" ]]; then
+            if [[ "$got_r1" == true ]]; then
+                _ena_layout="paired"
+            elif [[ "$fname" == "${srr}_subreads.fastq.gz" ]]; then
+                _ena_layout="subreads"
+            else
+                _ena_layout="single"
+            fi
+            echo "  [ENA] Detected layout: $_ena_layout (will skip probing for remaining accessions)"
+        fi
         return 0
     fi
 
@@ -319,6 +341,10 @@ Common_SRADownloadToFastq_MultiSource() {
     # base_dir already declared above
     local fastq_path="${base_dir}/ori_fastq"
     mkdir -p "$fastq_path"
+
+    # Layout detection: probe file type on first SRR, reuse for all subsequent.
+    # All SRRs in the same BioProject share the same layout (paired/single/subreads).
+    local _ena_layout=""
 
     # Phase 1: Data Acquisition
     # ENA is used exclusively — it provides FASTQ with original quality scores
