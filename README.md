@@ -6,8 +6,8 @@ Meta2Data is a comprehensive command-line tool for downloading, processing, and 
 
 ## Features
 
-- **Metadata Download and pre-clean**: Search, download and pre-clean for metadata from NCBI and CNCB databases by keywords or provied bioproject id
-- **Multi-Platform Support**: Automatic detection and processing of Illumina, PacBio, Ion Torrent, and 454 sequencing platforms(ONT not supported)
+- **Metadata Download and Pre-clean**: Search, download, and pre-clean metadata from NCBI and CNCB databases by keywords or provided BioProject ID
+- **Multi-Platform Support**: Automatic detection and processing of Illumina, PacBio, Ion Torrent, and 454 sequencing platforms (ONT not supported)
 - **Smart Primer Detection**: Automatic primer detection and trimming for amplicon data
 - **QIIME2 Integration**: Seamless integration with QIIME2 2024.10 for downstream analysis
 - **Taxonomy Assignment**: GreenGenes2 taxonomy classification and phylogenetic tree generation
@@ -20,33 +20,31 @@ If you are running the AmpliconPIP or ggCOMBO functions on a server, please ensu
 
 ### Option 1: Conda Environment (Recommended)
 
-copy the **env.yml** to your device.
-
-env.yml : qiime2 included (QIIME2, vsearch, fastp, sra-tools, seqkit, q2-greengenes, Meta2Data, etc.)
+Copy the **env.yml** to your device.
+The env.yml includes all dependencies (QIIME2, vsearch, fastp, git, pip, sra-tools, seqkit, etc.), but not Meta2Data.
 
 ```bash
-# Create environment from env1.yml
+# Create environment from env.yml
 conda env create -f env.yml
 
-# Verify installation
-Meta2Data --help
+conda activate env
+
 ```
 
-### Option 2: Pip Installation
+After creating an environment with env.yml, activate it and clone Meta2Data to your local folder.
 
-Install Meta2Data package only in your current conda env:
+**Note**: It is not recommended to install Meta2Data into the conda environment, because the pipeline may need to be updated in the future.
 
 ```bash
 # Install from GitHub
+cd path/to/Meta2Data
+
 pip install git+https://github.com/LinyangSun/Meta2Data.git@main
 
 # Or install from local repository
 pip install -e .
-
-# Verify installation
-Meta2Data --help
+export PATH="path/to/Meta2Data/bin:$PATH"
 ```
-**Note**: Pip installation only installs Meta2Data scripts and Python dependencies. You must have QIIME2 and other bioinformatics tools (vsearch, fastp, sra-tools, seqkit) already installed in your environment.
 
 ## Requirements
 
@@ -55,23 +53,6 @@ Meta2Data --help
 - **Memory**: Minimum 8GB RAM, 16GB+ recommended for large datasets
 - **Storage**: Varies by dataset size (SRA files could be large)
 
-### Software Dependencies
-- Python ≥ 3.10
-- QIIME2 2024.10 (Amplicon distribution)
-- vsearch 2.22+
-- fastp
-- sra-tools
-- seqkit
-- q2-greengenes2 (for taxonomy assignment)
-
-### Python Packages
-- biopython
-- pandas
-- numpy
-- openpyxl
-- requests
-
-All dependencies are included in the conda environment (`env.yml`).
 
 ## Usage
 
@@ -84,20 +65,20 @@ Meta2Data <command> [options]
 
 Available commands:
     MetaDL         Enhanced metadata download with parallel processing (NCBI + CNCB)
-    AmpliconPIP    Download and process 16s amplicon sequencing data (ITS AND 18S not included)
+    AmpliconPIP    Download and process 16S amplicon sequencing data (ITS and 18S not included)
     ggCOMBO        Merge AmpliconPIP results and assign taxonomy via GreenGenes2
     ShortreadsPIP  (In development)
 ```
 
 ### 1. MetaDL: Enhanced Metadata Download
 
-Download metadata from NCBI and CNCB databases with parallel processing and checkpoint/resume capability. Also included the basic column combination and format standardization. 
+Download metadata from NCBI and CNCB databases with parallel processing and checkpoint/resume capability. Also includes basic column combination and format standardization.
 
 **Two modes available:**
 
 #### Mode 1: BioProject ID Input
 
-In this mode, the user might already have a list of bioproject id. the bioproject id could be separate as multiple files, but store under same dir. In this dir you should only include the bioproject id files. For each bioproject id files, it should only have one column and tab separated. please see the example under example/MetaDL/bioprojectID.txt
+In this mode, the user may already have a list of BioProject IDs. The BioProject IDs can be split across multiple files, but must be stored under the same directory. This directory should only contain BioProject ID files. Each file should have one column and be tab-separated. See the example under example/MetaDL/bioprojectID.txt.
 
 ```bash
 # Basic usage
