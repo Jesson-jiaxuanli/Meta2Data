@@ -86,13 +86,8 @@ if [[ -z "$METADATA" ]]; then
     exit 1
 fi
 
-if [[ "$METADATA" != /* ]]; then
-    echo "Error: --metadata must be a full absolute path (starting with '/')"
-    exit 1
-fi
-
 if [[ ! -f "$METADATA" ]]; then
-    echo "Error: Metadata file '$METADATA' does not exist"
+    echo "Error: Metadata file not found: '$METADATA'. Please check the path."
     exit 1
 fi
 
@@ -130,20 +125,20 @@ echo "========================================="
 
 # Step 1: Generate dataset ID list
 if ! python "${SCRIPTS}/py_16s.py" GenerateDatasetsIDsFile --FilePath "$METADATA" --Bioproject "$COL_BIOPROJECT" --OutputDir "$OUTPUT"; then
-    echo "❌ ERROR: Failed to generate dataset IDs"
+    echo "❌ ERROR: Failed to generate dataset IDs, please check your metadata file and column names for BioProject."
     exit 1
 fi
 
 mapfile -t Dataset_ID_sets < <(awk '{print $1}' "${OUTPUT}/datasets_ID.txt")
 
 if [ ${#Dataset_ID_sets[@]} -eq 0 ]; then
-    echo "❌ ERROR: No datasets found"
+    echo "❌ ERROR: No datasets found, please check your metadata file and column names for BioProject."
     exit 1
 fi
 
 # Step 2: Generate SRA file list
 if ! python "${SCRIPTS}/py_16s.py" GenerateSRAsFile --FilePath "$METADATA" --Bioproject "$COL_BIOPROJECT" --SRA_Number "$COL_SRA" --OutputDir "$OUTPUT"; then
-    echo "❌ ERROR: Failed to generate SRA file lists"
+    echo "❌ ERROR: Failed to generate SRA file lists, please check your metadata file and column names for SRA."
     exit 1
 fi
 
