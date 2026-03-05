@@ -525,7 +525,7 @@ with open(manifest_path, 'w') as f:
                     rm -rf "${dataset_path}/ori_fastq"
                 fi
 
-                echo ">>> Downloading SRA data (454)..."
+                echo ">>> Downloading SRA data..."
                 echo "[$(date '+%H:%M:%S')] [${dataset_ID}] [2/3] Downloading..." >&3
                 if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
                     echo "Error: Download failed for dataset $dataset_ID" >&2
@@ -625,7 +625,7 @@ with open(manifest_path, 'w') as f:
                     rm -rf "${dataset_path}/ori_fastq"
                 fi
 
-                echo ">>> Downloading SRA data (Ion Torrent)..."
+                echo ">>> Downloading SRA data..."
                 echo "[$(date '+%H:%M:%S')] [${dataset_ID}] [2/3] Downloading..." >&3
                 if ! Common_SRADownloadToFastq_MultiSource -d "$dataset_path" -a "${sra_file_name}"; then
                     echo "Error: Download failed for dataset $dataset_ID" >&2

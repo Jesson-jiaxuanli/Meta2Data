@@ -67,28 +67,26 @@ Verify_Fastq_Integrity() {
 
 Download_From_ENA() {
     # Download FASTQ file(s) directly from ENA (European Nucleotide Archive).
-    # ENA provides pre-converted FASTQ files, serving as a reliable fallback
-    # when NCBI download fails.
+    # ENA provides pre-converted FASTQ files with original quality scores
+    # (critical for DADA2 error learning).
     #
     # Args:
     #   $1 = SRR/ERR/DRR accession
     #   $2 = target directory for FASTQ files
     #   $3 = rename prefix for output files
     #
+    # Output (silent on success): only prints errors/warnings to stderr.
+    # Sets _ena_layout on first successful download for subsequent calls.
     # Returns: 0 on success, 1 on failure
     local srr="$1"
     local target_dir="$2"
     local rename_prefix="$3"
     local max_retries=5
 
-    echo "  [ENA] Attempting ENA download for $srr..."
-
     # ENA URL structure: first 6 chars of accession, then full accession
-    # e.g., SRR123456 -> /vol1/fastq/SRR123/006/SRR1234566/
     local acc_prefix="${srr:0:6}"
     local acc_len=${#srr}
 
-    # Build ENA directory path based on accession length
     local ena_dir
     if (( acc_len <= 9 )); then
         ena_dir="https://ftp.sra.ebi.ac.uk/vol1/fastq/${acc_prefix}/${srr}"
@@ -100,11 +98,7 @@ Download_From_ENA() {
         ena_dir="https://ftp.sra.ebi.ac.uk/vol1/fastq/${acc_prefix}/${srr: -3}/${srr}"
     fi
 
-    echo "  [ENA] Base URL: $ena_dir"
-
     # Determine which file patterns to try based on detected layout.
-    # First SRR: probe all patterns (PE → SE → subreads).
-    # Subsequent SRRs: use the layout detected from the first SRR.
     local -a try_files
     if [[ -n "$_ena_layout" ]]; then
         case "$_ena_layout" in
@@ -112,17 +106,15 @@ Download_From_ENA() {
             single)   try_files=("${srr}.fastq.gz") ;;
             subreads) try_files=("${srr}_subreads.fastq.gz") ;;
         esac
-        echo "  [ENA] Using detected layout: $_ena_layout"
     else
         try_files=("${srr}_1.fastq.gz" "${srr}_2.fastq.gz" "${srr}.fastq.gz" "${srr}_subreads.fastq.gz")
     fi
-    # HTTP 404 means the file doesn't exist — skip immediately without retry.
+
     local downloaded_any=false
     local got_r1=false
     local got_r2=false
 
     for fname in "${try_files[@]}"; do
-        # If we already have both PE files, skip SE and subreads
         if [[ "$got_r1" == true && "$got_r2" == true ]]; then
             break
         fi
@@ -131,55 +123,35 @@ Download_From_ENA() {
         local out_file="${target_dir}/${fname}"
         local success=false
 
-        echo "  [ENA] Trying: $fname"
         for ((attempt=1; attempt<=max_retries; attempt++)); do
             local wget_err=""
             if wget_err=$(wget --timeout=60 --tries=1 "$url" -O "$out_file" 2>&1); then
-                # Verify the file is a valid gzip
                 if gzip -t "$out_file" 2>/dev/null; then
-                    local dl_size
-                    dl_size=$(stat -c%s "$out_file" 2>/dev/null || stat -f%z "$out_file" 2>/dev/null || echo "?")
-                    echo "  [ENA] ✓ Downloaded $fname (${dl_size} bytes)"
                     success=true
                     break
                 else
-                    echo "  [ENA] Corrupt download for $fname (attempt $attempt/$max_retries)"
+                    echo "  [ENA] Corrupt download for $fname (attempt $attempt/$max_retries)" >&2
                     rm -f "$out_file"
                 fi
             else
-                # Extract HTTP status code from wget output
                 local http_code
                 http_code=$(echo "$wget_err" | grep -oP 'HTTP request sent.*\K[0-9]{3}' | tail -1)
-                if [[ -n "$http_code" ]]; then
-                    # 404 = file doesn't exist on ENA, no point retrying
-                    if [[ "$http_code" == "404" ]]; then
-                        echo "  [ENA] ✗ $fname: not found (HTTP 404)"
-                        rm -f "$out_file"
-                        break
-                    fi
-                    echo "  [ENA] ✗ $fname: HTTP $http_code (attempt $attempt/$max_retries)"
-                else
-                    local wget_reason
-                    wget_reason=$(echo "$wget_err" | tail -1)
-                    echo "  [ENA] ✗ $fname: $wget_reason (attempt $attempt/$max_retries)"
+                if [[ -n "$http_code" && "$http_code" == "404" ]]; then
+                    rm -f "$out_file"
+                    break
                 fi
                 rm -f "$out_file"
             fi
-            # Exponential backoff: 5, 10, 20, 40, 60 (capped)
             local wait=$(( 5 * (1 << (attempt - 1)) ))
             (( wait > 60 )) && wait=60
             [[ $attempt -lt $max_retries ]] && sleep "$wait"
         done
 
         if [[ "$success" == true ]]; then
-            # Rename to match expected naming convention
             local base_filename="${fname/${srr}/}"
-            # Normalize _subreads.fastq.gz → .fastq.gz (treat as SE)
             base_filename="${base_filename/_subreads.fastq/.fastq}"
             mv "$out_file" "${target_dir}/${rename_prefix}${base_filename}"
-            echo "  [ENA] → Renamed to: ${rename_prefix}${base_filename}"
             downloaded_any=true
-            # Track PE pair status
             [[ "$fname" == "${srr}_1.fastq.gz" ]] && got_r1=true
             [[ "$fname" == "${srr}_2.fastq.gz" ]] && got_r2=true
         else
@@ -188,7 +160,6 @@ Download_From_ENA() {
     done
 
     if [[ "$downloaded_any" == true ]]; then
-        # Detect layout from first SRR and cache for subsequent accessions
         if [[ -z "$_ena_layout" ]]; then
             if [[ "$got_r1" == true ]]; then
                 _ena_layout="paired"
@@ -197,35 +168,39 @@ Download_From_ENA() {
             else
                 _ena_layout="single"
             fi
-            echo "  [ENA] Detected layout: $_ena_layout (will skip probing for remaining accessions)"
         fi
         return 0
     fi
 
-    echo "  [ENA] ✗ ENA download failed for $srr — no FASTQ files available" >&2
+    echo "  [ENA] Failed: $srr (no FASTQ files available after $max_retries retries)" >&2
     return 1
 }
 
 Download_CRR() {
+    # Download FASTQ file(s) from CNCB (China National Center for Bioinformation).
+    #
+    # Args:
+    #   $1 = CRR accession
+    #   $2 = target directory for FASTQ files
+    #   $3 = rename prefix for output files
+    #
+    # Output: silent on success, errors to stderr.
+    # Returns: 0 on success, 1 on failure
     local crr=$1
     local target_dir=$2
     local rename_prefix=$3
     local max_retries=5
-
-    echo "[CNCB] Processing $crr"
 
     # 1. Map CRR to parent CRA ID (with retry)
     local cra=""
     for ((attempt=1; attempt<=3; attempt++)); do
         cra=$(wget -qO- --timeout=30 --user-agent="Mozilla/5.0" "https://ngdc.cncb.ac.cn/gsa/search?searchTerm=${crr}" | grep -v "example" | grep -oe "CRA[0-9]\+" | uniq | head -n 1)
         [[ -n "$cra" ]] && break
-        local wait=$(( 5 * attempt ))
-        echo "  CRA lookup retry $attempt/3 (wait ${wait}s)..." >&2
-        sleep "$wait"
+        sleep $(( 5 * attempt ))
     done
 
     if [[ -z "$cra" ]]; then
-        echo "Error: Could not map $crr to a CRA project." >&2
+        echo "  [CNCB] Failed: Could not map $crr to a CRA project" >&2
         return 1
     fi
 
@@ -258,31 +233,25 @@ Download_CRR() {
                 if [[ -f "$filename" ]]; then
                     local current_md5=$(md5sum "$filename" | awk '{print $1}')
                     if [[ "$current_md5" == "$expected_md5" ]]; then
-                        # Standardize filename: _r1/_R1 → _1, _r2/_R2 → _2
                         local new_filename=$(echo "$filename" | sed -E 's/_[rR]1([._])/_1\1/; s/_[rR]2([._])/_2\1/')
-                        # Strip CRR ID from filename (keep the separator)
                         local base_filename=$(echo "$new_filename" | sed "s/${crr}//")
                         mv "$filename" "${target_dir}/${rename_prefix}${base_filename}"
                         success=true
-                        echo "  ✓ Downloaded: $filename → ${rename_prefix}${base_filename}"
                         break
                     else
-                        echo "  MD5 mismatch (attempt $i/$max_retries), retrying..."
                         rm -f "$filename"
                     fi
                 fi
             else
-                echo "  Download failed (attempt $i/$max_retries)..." >&2
                 rm -f "$filename"
             fi
-            # Exponential backoff: 5, 10, 20, 40, 60 (capped)
             local wait=$(( 5 * (1 << (i - 1)) ))
             (( wait > 60 )) && wait=60
             [[ $i -lt $max_retries ]] && sleep "$wait"
         done
 
         if [[ "$success" = false ]]; then
-            echo "Error: Failed to download $filename after $max_retries attempts." >&2
+            echo "  [CNCB] Failed: $crr/$filename after $max_retries attempts" >&2
             return 1
         fi
     done
@@ -306,13 +275,15 @@ Common_SRADownloadToFastq_MultiSource() {
         return 1
     fi
 
-    # Pre-scan accession file to determine required tools
+    # Pre-scan accession file to count and classify accessions
     local has_ncbi_accessions=false
     local has_cncb_accessions=false
     local base_dir="${dir_path%/}"
+    local total_accessions=0
 
     while IFS=$'\t' read -r srr _; do
         [[ -z "$srr" ]] && continue
+        total_accessions=$((total_accessions + 1))
         if [[ "$srr" =~ ^CRR ]]; then
             has_cncb_accessions=true
         elif [[ "$srr" =~ ^[EDS]RR ]]; then
@@ -320,108 +291,136 @@ Common_SRADownloadToFastq_MultiSource() {
         fi
     done < "${base_dir}/${acc_file}"
 
-    # Check dependencies based on what we'll download
+    # Check dependencies
     if [[ "$has_ncbi_accessions" == true || "$has_cncb_accessions" == true ]]; then
         command -v wget >/dev/null 2>&1 || { echo "Error: 'wget' not found (required for data downloads)." >&2; return 1; }
     fi
 
-    # Quick connectivity check — fail fast instead of waiting through retries
-    # ENA is used exclusively because it provides FASTQ files with original
-    # quality scores (critical for DADA2 error learning). The NCBI trace API
-    # returns simplified/binned quality scores that break DADA2.
+    # Connectivity check
     if [[ "$has_ncbi_accessions" == true ]]; then
-        echo "  Checking ENA connectivity..."
         if ! wget -q --spider --timeout=10 "https://ftp.sra.ebi.ac.uk/" 2>/dev/null; then
-            echo "  ✗ ENA is unreachable. Check your network connection." >&2
+            echo "  ENA is unreachable. Check your network connection." >&2
             return 1
         fi
-        echo "  ✓ ENA reachable"
     fi
 
-    # base_dir already declared above
+    # Determine source label for summary
+    local source_label="ENA"
+    if [[ "$has_cncb_accessions" == true && "$has_ncbi_accessions" == true ]]; then
+        source_label="ENA+CNCB"
+    elif [[ "$has_cncb_accessions" == true ]]; then
+        source_label="CNCB"
+    fi
+
     local fastq_path="${base_dir}/ori_fastq"
     mkdir -p "$fastq_path"
 
     # Layout detection: probe file type on first SRR, reuse for all subsequent.
-    # All SRRs in the same BioProject share the same layout (paired/single/subreads).
     local _ena_layout=""
 
-    # Phase 1: Data Acquisition
-    # ENA is used exclusively — it provides FASTQ with original quality scores
-    # and separate R1/R2 files (no deinterleaving needed).
+    # Download all accessions, tracking progress
+    local dl_success=0
+    local dl_failed=0
+    local current=0
+    local -a failed_accessions=()
+
     while IFS=$'\t' read -r srr rename _; do
         [[ -z "$srr" || -z "$rename" ]] && continue
+        current=$((current + 1))
 
-        # Route by ID type (CRR vs SRR/ERR/DRR)
         if [[ "$srr" =~ ^CRR ]]; then
-            # CRR files go directly to ori_fastq/ with rename prefix
-            Download_CRR "$srr" "$fastq_path" "$rename"
+            if Download_CRR "$srr" "$fastq_path" "$rename"; then
+                dl_success=$((dl_success + 1))
+            else
+                dl_failed=$((dl_failed + 1))
+                failed_accessions+=("$srr")
+            fi
 
         elif [[ "$srr" =~ ^[EDS]RR ]]; then
-            echo "[ENA] Processing $srr"
-
-            if ! Download_From_ENA "$srr" "$fastq_path" "$rename"; then
-                echo "  ✗ ENA download failed for $srr" >&2
-                return 1
-            fi
-
-            # Verify FASTQ integrity for downloaded files
-            echo "  [verify] Checking FASTQ integrity for $srr..."
-            local verify_failed=false
-            for fq in "${fastq_path}/${rename}"*.fastq*; do
-                [[ -f "$fq" ]] || continue
-                if ! Verify_Fastq_Integrity "$fq"; then
-                    echo "  [verify] ✗ Invalid: $(basename "$fq") — removing"
-                    rm -f "$fq"
-                    verify_failed=true
-                else
-                    local fq_size
-                    fq_size=$(stat -c%s "$fq" 2>/dev/null || stat -f%z "$fq" 2>/dev/null || echo "?")
-                    echo "  [verify] ✓ OK: $(basename "$fq") (${fq_size} bytes)"
+            if Download_From_ENA "$srr" "$fastq_path" "$rename"; then
+                # Silent integrity check — only report failures
+                local verify_failed=false
+                for fq in "${fastq_path}/${rename}"*.fastq*; do
+                    [[ -f "$fq" ]] || continue
+                    if ! Verify_Fastq_Integrity "$fq"; then
+                        echo "  [verify] Invalid: $(basename "$fq") — removing" >&2
+                        rm -f "$fq"
+                        verify_failed=true
+                    fi
+                done
+                if [[ "$verify_failed" == true ]]; then
+                    local remaining_files
+                    remaining_files=$(find "$fastq_path" -name "${rename}*.fastq*" -type f 2>/dev/null | wc -l)
+                    if [[ "$remaining_files" -eq 0 ]]; then
+                        echo "  [verify] No valid files remaining for $srr" >&2
+                        dl_failed=$((dl_failed + 1))
+                        failed_accessions+=("$srr")
+                        continue
+                    fi
                 fi
-            done
-            if [[ "$verify_failed" == true ]]; then
-                # Check if any valid files remain
-                local remaining_files
-                remaining_files=$(find "$fastq_path" -name "${rename}*.fastq*" -type f 2>/dev/null | wc -l)
-                if [[ "$remaining_files" -eq 0 ]]; then
-                    echo "  [verify] ✗ No valid FASTQ files remaining for $srr" >&2
-                    return 1
-                fi
-                echo "  [verify] $remaining_files valid file(s) remaining after cleanup"
+                dl_success=$((dl_success + 1))
+            else
+                dl_failed=$((dl_failed + 1))
+                failed_accessions+=("$srr")
             fi
         else
-            echo "Warning: Unknown Accession format: $srr" >&2
+            echo "  Warning: Unknown accession format: $srr" >&2
+        fi
+
+        # Print progress at 25% milestones (for datasets with >= 8 accessions)
+        if [[ "$total_accessions" -ge 8 ]]; then
+            local pct=$((current * 100 / total_accessions))
+            local prev_pct=$(( (current - 1) * 100 / total_accessions ))
+            # Print when crossing a 25% boundary
+            if [[ $((pct / 25)) -gt $((prev_pct / 25)) ]]; then
+                echo "  [download] Progress: ${current}/${total_accessions} (${pct}%)"
+            fi
         fi
     done < "${base_dir}/${acc_file}"
 
-    # Orphan file cleanup: some download sources may produce an extra unpaired
-    # reads file (prefix.fastq.gz) alongside paired files (_1/_2). Remove the
-    # orphan when both paired files exist, to avoid downstream misinterpretation.
+    # Orphan file cleanup (silent unless orphans found)
     local orphan_count=0
     for r1 in "${fastq_path}/"*_1.fastq*; do
         [[ -f "$r1" ]] || continue
         local prefix="${r1%_1.fastq*}"
-        # Verify R2 also exists
         local has_r2=false
         for r2 in "${prefix}_2.fastq"*; do
             [[ -f "$r2" ]] && has_r2=true && break
         done
         $has_r2 || continue
-        # Both R1 and R2 present — remove orphan (prefix.fastq / prefix.fastq.gz)
         for orphan in "${prefix}.fastq" "${prefix}.fastq.gz"; do
             if [[ -f "$orphan" ]]; then
-                echo "  Removing orphan file: $(basename "$orphan")"
                 rm -f "$orphan"
                 orphan_count=$((orphan_count + 1))
             fi
         done
     done
-    if [[ $orphan_count -gt 0 ]]; then
+
+    # Count total files and size
+    local total_files
+    total_files=$(find "$fastq_path" -type f -name '*.fastq*' 2>/dev/null | wc -l | tr -d ' ')
+    local total_size
+    total_size=$(du -sh "$fastq_path" 2>/dev/null | cut -f1 | tr -d ' ')
+
+    # Detect layout label
+    local layout_label="${_ena_layout:-unknown}"
+
+    # Print summary
+    if [[ "$dl_failed" -eq 0 ]]; then
+        echo "  [${source_label}] Downloaded ${dl_success}/${total_accessions} | Layout: ${layout_label} | ${total_files} files (${total_size})"
+    else
+        echo "  [${source_label}] Downloaded ${dl_success}/${total_accessions} | ${dl_failed} FAILED | ${total_files} files (${total_size})"
+        for acc in "${failed_accessions[@]}"; do
+            echo "    Failed: $acc" >&2
+        done
+        return 1
+    fi
+
+    if [[ "$orphan_count" -gt 0 ]]; then
         echo "  Cleaned up $orphan_count orphan file(s)"
     fi
-    return 0
 
+    return 0
 }
 
 Amplicon_Common_MakeManifestFileForQiime2() {
