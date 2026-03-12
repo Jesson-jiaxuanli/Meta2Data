@@ -200,7 +200,7 @@ def mk_manifest_SE(file_path):
     for i, row in df.iterrows():
         basenames = os.path.basename(row[0])
         path = os.path.dirname(row[0])
-        sample = '.'.join(basenames.split('.')[:-1])
+        sample = basenames.split('.fastq')[0]
         df1.loc[i, 'sample-id'] = sample
         df1.loc[i, 'absolute-filepath'] = os.path.join(path, basenames)
 
@@ -1417,6 +1417,7 @@ def import_vsearch_to_qiime2(zotu_fasta, otu_table_tsv, manifest_path,
             'qiime', 'tools', 'import',
             '--input-path', clean_fasta,
             '--type', 'FeatureData[Sequence]',
+            '--input-format', 'DNAFASTAFormat',
             '--output-path', output_repseq_qza
         ], check=True)
 

@@ -348,7 +348,6 @@ for i in "${!Dataset_ID_sets[@]}"; do
                               --detect_adapter_for_pe \
                               --disable_quality_filtering \
                               --disable_length_filtering \
-                              --quiet \
                               -w "$cpu" \
                               -j "${adapter_removed_path}/fastp.json" \
                               -h "${adapter_removed_path}/fastp.html"
@@ -365,8 +364,7 @@ for i in "${!Dataset_ID_sets[@]}"; do
                                   --detect_adapter_for_pe \
                                   --disable_quality_filtering \
                                   --disable_length_filtering \
-                                  --quiet \
-                                  -w "$cpu" \
+                                      -w "$cpu" \
                                   -j "${adapter_removed_path}/fastp.json" \
                                   -h "${adapter_removed_path}/fastp.html"
                         done
@@ -378,7 +376,6 @@ for i in "${!Dataset_ID_sets[@]}"; do
                               -o "${adapter_removed_path}/$(basename "$fq")" \
                               --disable_quality_filtering \
                               --disable_length_filtering \
-                              --quiet \
                               -w "$cpu" \
                               -j "${adapter_removed_path}/fastp.json" \
                               -h "${adapter_removed_path}/fastp.html"
@@ -583,7 +580,6 @@ with open(manifest_path, 'w') as f:
                           -o "${adapter_removed_path}/$(basename "$fq")" \
                           --disable_quality_filtering \
                           --disable_length_filtering \
-                          --quiet \
                           -w "$cpu" \
                           -j "${adapter_removed_path}/fastp.json" \
                           -h "${adapter_removed_path}/fastp.html"
@@ -685,7 +681,6 @@ with open(manifest_path, 'w') as f:
                           -o "${adapter_removed_path}/$(basename "$fq")" \
                           --disable_quality_filtering \
                           --disable_length_filtering \
-                          --quiet \
                           -w "$cpu" \
                           -j "${adapter_removed_path}/fastp.json" \
                           -h "${adapter_removed_path}/fastp.html"
@@ -770,7 +765,6 @@ with open(manifest_path, 'w') as f:
                           -o "${adapter_removed_path}/$(basename "$fq")" \
                           --disable_quality_filtering \
                           --disable_length_filtering \
-                          --quiet \
                           -w "$cpu" \
                           -j "${adapter_removed_path}/fastp.json" \
                           -h "${adapter_removed_path}/fastp.html"
