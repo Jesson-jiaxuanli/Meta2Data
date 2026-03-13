@@ -1487,7 +1487,10 @@ def run_unified_pipeline_v4(input_folder, output_folder, email, api_key=None, ma
     output_path = Path(output_folder)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    state_manager = StateManager(output_folder)
+    tmp_path = output_path / "tmp"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+
+    state_manager = StateManager(tmp_path)
 
     if max_workers is None:
         max_workers = 8 if api_key else DEFAULT_MAX_WORKERS
@@ -1536,11 +1539,11 @@ def run_unified_pipeline_v4(input_folder, output_folder, email, api_key=None, ma
     if biosample_ids:
         print(f"\n[Step 1b] Processing {len(biosample_ids)} BioSample IDs...")
         bs_df = download_ncbi_metadata_from_biosamples(
-            biosample_ids, output_path, email, api_key
+            biosample_ids, tmp_path, email, api_key
         )
         if bs_df is not None and not bs_df.empty and validate_run_data(bs_df):
             bs_df['Source_Database'] = 'NCBI'
-            csv_path = output_path / "BIOSAMPLE_INPUT.processed.csv"
+            csv_path = tmp_path / "BIOSAMPLE_INPUT.processed.csv"
             bs_df.to_csv(csv_path, index=False, encoding='utf-8')
             biosample_results.append({'bioproject_id': 'BIOSAMPLE_INPUT',
                                        'df': bs_df, 'source': 'NCBI'})
@@ -1554,7 +1557,7 @@ def run_unified_pipeline_v4(input_folder, output_folder, email, api_key=None, ma
 
     results = parallel_process_bioprojects(
         bioproject_ids,
-        output_path,
+        tmp_path,
         email,
         api_key,
         max_workers,
@@ -1576,7 +1579,7 @@ def run_unified_pipeline_v4(input_folder, output_folder, email, api_key=None, ma
     print(f"\nOutput files:")
     print(f"  - status.tsv: {len(status_df)} records")
     print(f"  - all_metadata_merged.csv: {len(final_df)} records")
-    print(f"\nCheckpoints: {output_folder}/checkpoints/")
+    print(f"\nTmp/Checkpoints: {output_folder}/tmp/checkpoints/")
     print("="*70 + "\n")
 
     return {
