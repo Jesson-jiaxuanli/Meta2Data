@@ -1063,7 +1063,7 @@ def parallel_process_bioprojects(bioproject_list, output_dir, max_workers,
 def generate_status_report(all_ids, state_manager, output_dir):
     """Generate status.tsv."""
     status_records = state_manager.get_all_status()
-    rows = [{'BioProject': bid, 'Status': status_records.get(bid, 'unknown')}
+    rows = [{'ID': bid, 'Status': status_records.get(bid, 'unknown')}
             for bid in all_ids]
 
     status_df = pd.DataFrame(rows)
@@ -1188,8 +1188,20 @@ def run_unified_pipeline(input_folder, output_folder, api_key=None, max_workers=
             biosample_results.append({'bioproject_id': 'BIOSAMPLE_INPUT',
                                        'df': bs_df, 'source': 'NCBI'})
             print(f"  BioSample metadata saved: {len(bs_df)} records")
+
+            # Mark individual BioSample IDs in state manager
+            found_ids = set()
+            if 'BioSample' in bs_df.columns:
+                found_ids = set(bs_df['BioSample'].dropna().astype(str))
+            for bid in groups['biosample']:
+                if bid in found_ids:
+                    state_manager.mark_status(bid, STATUS_HAS_DATA)
+                else:
+                    state_manager.mark_status(bid, STATUS_NO_DATA)
         else:
             print("  No valid data retrieved from BioSample IDs")
+            for bid in groups['biosample']:
+                state_manager.mark_status(bid, STATUS_NO_DATA)
 
     # Step 2: Process BioProjects
     print("\n[Step 2] Processing BioProjects...")
