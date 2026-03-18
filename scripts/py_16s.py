@@ -242,78 +242,90 @@ def mk_manifest_PE(file_path):
 
 
 def trim_pos_deblur(file_path):
-    """Calculate trim positions for Deblur"""
+    """
+    Calculate trim positions (start, end) for DADA2/Deblur from a
+    QIIME2 seven-number-summaries TSV.
+
+    Strategy:
+      - Use count row to find the read-length boundary (outer1).
+      - Use the 25th-percentile quality row as the primary decision maker
+        (represents the quality that 75% of reads exceed).
+      - Apply a sliding window (W=5) to smooth single-position noise.
+      - Scan inward from both ends to find positions where the smoothed
+        25th-percentile quality consistently meets Q_TRIM (25).
+      - Require 5 consecutive passing positions for stability.
+      - Enforce a minimum retained length of 50 bp.
+
+    Returns:
+      Prints "start,end" to stdout for shell capture.
+      Returns (start, end) tuple, or (None, None) if no valid window.
+    """
+    Q_TRIM = 25          # quality threshold for 25th percentile
+    W = 5                # sliding window size
+    CONSEC = 5           # consecutive positions required
+    MIN_RETAIN = 50      # minimum retained sequence length
+
     with open(file_path, "r") as f:
         tsv = [line.rstrip("\n") for line in f]
-    
+
     pos = [int(x) for x in tsv[0].split("\t")[1:]]
     L = len(pos)
     counts = [float(x) for x in tsv[1].split("\t")[1:]]
-    
-    threshold = min(9000, max(counts) * 0.7)
-    under = [i for i, v in enumerate(counts) if v < threshold]
+
+    # ── Step 1: count-based read-length boundary ──
+    count_thresh = min(9000, max(counts) * 0.7)
+    under = [i for i, v in enumerate(counts) if v < count_thresh]
     outer1 = max(under[0] if under else (L - 1), 40)
-    
-    inner_region = range(0, 20)
-    outer_region = range(max(0, outer1 - 20), outer1)
-    
-    rows = []
+
+    # ── Step 2: parse the 25th-percentile row (index 2 in data rows) ──
+    data_rows = []
     for line in tsv[3:]:
         vals = [float(x) for x in line.split("\t")[1:][:L]]
-        rows.append(vals)
-    
-    per_row = []
-    for vals in rows:
-        na_idx = {i for i, v in enumerate(vals) if v < 20}
-        
-        # Calculate start position
-        inner_na = sorted(i for i in na_idx if i in inner_region)
-        n_inner = len(inner_na)
-        
-        if n_inner == 0:
-            start = 0
-        elif n_inner >= 15:
-            start = None
-        else:
-            s = set(inner_na)
-            r = 0
-            while r in s and r < 20:
-                r += 1
-            start = r if r > 0 else 0
-        
-        # Calculate end position
-        outer_na = sorted(i for i in na_idx if i in outer_region)
-        n_outer = len(outer_na)
-        
-        if n_outer == 0:
-            end = outer1
-        elif n_outer >= 15:
-            end = None
-        else:
-            s = set(outer_na)
-            r = 0
-            while (outer1 - r) in s:
-                r += 1
-            end = outer1 - r - 1 if r > 0 else outer1
-        
-        per_row.append((start, end))
-    
-    starts = [s for s, e in per_row if s is not None]
-    ends = [e for s, e in per_row if e is not None]
-    
-    if not starts or not ends:
+        data_rows.append(vals)
+
+    if len(data_rows) < 3:
+        print("None,None")
         return (None, None)
-    
-    valid_rows = sum(1 for s, e in per_row if s is not None and e is not None)
-    if valid_rows < len(rows) * 0.5:
+
+    pct_25 = data_rows[2]  # row order: 2%, 9%, 25%, 50%, ...
+
+    # ── Step 3: sliding-window smoothing ──
+    sm = [None] * L
+    for i in range(L - W + 1):
+        sm[i] = sum(pct_25[i:i + W]) / W
+
+    # ── Step 4: find start (5' trim) ──
+    # Scan left-to-right within [0, outer1) for CONSEC consecutive
+    # positions where smoothed quality >= Q_TRIM.
+    final_start = None
+    for i in range(outer1 - CONSEC + 1):
+        if sm[i] is None:
+            continue
+        if all(sm[i + j] is not None and sm[i + j] >= Q_TRIM
+               for j in range(CONSEC)):
+            final_start = i
+            break
+
+    # ── Step 5: find end (3' truncation) ──
+    # Scan right-to-left from outer1 for CONSEC consecutive positions
+    # where smoothed quality >= Q_TRIM.
+    final_end = None
+    scan_limit = L - W  # last index with a valid smoothed value
+    for i in range(min(outer1, scan_limit), CONSEC - 1, -1):
+        if all(sm[i - j] is not None and sm[i - j] >= Q_TRIM
+               for j in range(CONSEC)):
+            final_end = i
+            break
+
+    # ── Step 6: validate ──
+    if final_start is None or final_end is None:
+        print("None,None")
         return (None, None)
-    
-    final_start = max(0, min(max(starts), L - 1)) + 1
-    final_end = max(0, min(min(ends), L - 1)) - 1
-    
-    if final_start >= final_end:
+
+    if final_end - final_start < MIN_RETAIN:
+        print("None,None")
         return (None, None)
-    
+
     print(f"{final_start},{final_end}")
     return (final_start, final_end)
 
