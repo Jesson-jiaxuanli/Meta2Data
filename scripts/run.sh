@@ -143,6 +143,55 @@ if ! python "${SCRIPTS}/py_16s.py" GenerateSRAsFile --FilePath "$METADATA" --Bio
 fi
 
 ################################################################################
+#                   PHASE 1.5: PLATFORM PRE-DETECTION                          #
+################################################################################
+# Batch-detect sequencing platforms BEFORE parallel processing to avoid
+# NCBI Entrez API rate limits (3 req/s without API key).
+
+echo "========================================="
+echo "PHASE 1.5: Platform Detection"
+echo "Started: $(date)"
+echo "========================================="
+
+export PLATFORM_CACHE_FILE="${OUTPUT}/.platform_cache.txt"
+_pairs_file="${OUTPUT}/.platform_query_pairs.txt"
+: > "$_pairs_file"
+
+# Collect dataset_id<TAB>first_srr[<TAB>bioproject_id] for each unprocessed dataset
+for _ds_id in "${Dataset_ID_sets[@]}"; do
+    _ds_path="${OUTPUT}/${_ds_id}"
+
+    # Skip already processed
+    [[ -f "${_ds_path}/${_ds_id}-final-rep-seqs.qza" ]] && continue
+
+    _sra_file="${_ds_path}/${_ds_id}_sra.txt"
+    if [[ ! -f "$_sra_file" ]]; then
+        echo "  Warning: SRA file not found for ${_ds_id}, skipping"
+        continue
+    fi
+
+    _first_srr=$(awk 'NR==1 {print $1}' "$_sra_file")
+    # CRR accessions need bioproject_id for CNCB API
+    if [[ "$_first_srr" =~ ^CRR ]]; then
+        printf '%s\t%s\t%s\n' "$_ds_id" "$_first_srr" "$_ds_id" >> "$_pairs_file"
+    else
+        printf '%s\t%s\n' "$_ds_id" "$_first_srr" >> "$_pairs_file"
+    fi
+done
+
+# Single Python call: batch Entrez for NCBI, serial for CNCB
+: > "$PLATFORM_CACHE_FILE"
+if [[ -s "$_pairs_file" ]]; then
+    _n_queries=$(wc -l < "$_pairs_file" | tr -d ' ')
+    echo "  Querying platforms for ${_n_queries} datasets..."
+    python "${SCRIPTS}/py_16s.py" batch_get_sequencing_platforms --pairs_file "$_pairs_file" > "$PLATFORM_CACHE_FILE"
+    echo "  Resolved $(wc -l < "$PLATFORM_CACHE_FILE" | tr -d ' ')/${_n_queries} datasets"
+fi
+
+rm -f "$_pairs_file"
+echo ""
+
+################################################################################
 #                   PHASE 2: INDIVIDUAL DATASET PROCESSING                     #
 ################################################################################
 
@@ -198,18 +247,25 @@ for i in "${!Dataset_ID_sets[@]}"; do
         set -e
         cd "$dataset_path"
 
-        # 1. Dynamic Platform Detection (BEFORE downloading)
+        # 1. Platform Detection — use pre-detected cache, fallback to API query
         echo ">>> Detecting sequencing platform..."
         first_srr=$(awk 'NR==1 {print $1}' "${sra_file_name}")
 
-        # Query API for platform (pass BioProject ID for CNCB/CRR accessions)
-        if [[ "$first_srr" =~ ^CRR ]]; then
-            # CRR accession - need to pass BioProject ID to CNCB API
-            echo "  CNCB accession detected, using BioProject: $dataset_ID"
-            platform=$(python "${SCRIPTS}/py_16s.py" get_sequencing_platform --srr_id "$first_srr" --bioproject_id "$dataset_ID")
-        else
-            # NCBI accession (SRR/ERR/DRR)
-            platform=$(python "${SCRIPTS}/py_16s.py" get_sequencing_platform --srr_id "$first_srr")
+        # Read from cache file (written by Phase 1.5)
+        platform=""
+        if [[ -f "$PLATFORM_CACHE_FILE" ]]; then
+            platform=$(awk -v id="$dataset_ID" '$1 == id {print $2}' "$PLATFORM_CACHE_FILE")
+        fi
+
+        # Fallback: query API if cache miss
+        if [[ -z "$platform" ]]; then
+            echo "  Cache miss, querying API..."
+            if [[ "$first_srr" =~ ^CRR ]]; then
+                echo "  CNCB accession detected, using BioProject: $dataset_ID"
+                platform=$(python "${SCRIPTS}/py_16s.py" get_sequencing_platform --srr_id "$first_srr" --bioproject_id "$dataset_ID")
+            else
+                platform=$(python "${SCRIPTS}/py_16s.py" get_sequencing_platform --srr_id "$first_srr")
+            fi
         fi
 
         echo "Detected platform: $platform"

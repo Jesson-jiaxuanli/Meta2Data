@@ -571,6 +571,86 @@ def _get_platform_from_ncbi(srr_id):
         return None
 
 
+def batch_get_sequencing_platforms(pairs_file):
+    """
+    Batch-detect sequencing platforms for multiple datasets.
+
+    Reads a TSV file with dataset_id<TAB>srr_id[<TAB>bioproject_id] per line.
+    NCBI accessions (SRR/ERR/DRR) are queried in a single Entrez epost+efetch.
+    CNCB accessions (CRR) are queried serially with a short delay.
+
+    Prints results to stdout as: dataset_id<TAB>platform (one per line).
+    """
+    from Bio import Entrez
+    import xml.etree.ElementTree as ET
+    import time
+
+    Entrez.email = "your_email@example.com"
+
+    # Read input pairs
+    ncbi_pairs = []   # [(dataset_id, srr_id), ...]
+    cncb_pairs = []   # [(dataset_id, srr_id, bioproject_id), ...]
+
+    with open(pairs_file) as f:
+        for line in f:
+            parts = line.strip().split('\t')
+            if len(parts) < 2:
+                continue
+            ds_id, srr = parts[0], parts[1]
+            bio_id = parts[2] if len(parts) > 2 else None
+            if srr.startswith('CRR'):
+                cncb_pairs.append((ds_id, srr, bio_id))
+            else:
+                ncbi_pairs.append((ds_id, srr))
+
+    # --- NCBI batch query via epost + efetch ---
+    if ncbi_pairs:
+        srr_to_ds = {srr: ds_id for ds_id, srr in ncbi_pairs}
+        srr_list = list(srr_to_ds.keys())
+
+        try:
+            # epost: submit all SRR IDs at once
+            search_term = " OR ".join(srr_list)
+            search_handle = Entrez.esearch(db="sra", term=search_term, retmax=len(srr_list))
+            search_results = Entrez.read(search_handle)
+            search_handle.close()
+
+            uid_list = search_results.get('IdList', [])
+            if uid_list:
+                # efetch: retrieve all records in one call
+                fetch_handle = Entrez.efetch(db="sra", id=",".join(uid_list), retmode="xml")
+                xml_data = fetch_handle.read()
+                fetch_handle.close()
+
+                root = ET.fromstring(xml_data)
+                for pkg in root.findall('.//EXPERIMENT_PACKAGE'):
+                    run_el = pkg.find('.//RUN')
+                    platform_el = pkg.find('.//PLATFORM')
+                    if run_el is not None and platform_el is not None and len(platform_el) > 0:
+                        acc = run_el.get('accession', '')
+                        plat = platform_el[0].tag
+                        if acc in srr_to_ds:
+                            print(f"{srr_to_ds[acc]}\t{plat}")
+                            del srr_to_ds[acc]
+
+            # Warn about unresolved accessions
+            for srr, ds_id in srr_to_ds.items():
+                print(f"Warning: No platform found for {srr} ({ds_id})", file=sys.stderr)
+
+        except Exception as e:
+            print(f"Warning: Batch NCBI query failed: {e}", file=sys.stderr)
+
+    # --- CNCB serial query with delay ---
+    for ds_id, srr, bio_id in cncb_pairs:
+        plat = _get_platform_from_cncb(srr, bio_id)
+        if plat:
+            print(f"{ds_id}\t{plat}")
+        else:
+            print(f"Warning: No platform found for {srr} ({ds_id})", file=sys.stderr)
+        if len(cncb_pairs) > 1:
+            time.sleep(2)
+
+
 def adaptive_tail_trim(input_dir, output_dir, max_sample_reads=10000):
     """
     Adaptive tail trimming for 454 reads: analyse → trim → compute max-ambiguous.
@@ -1548,6 +1628,7 @@ if __name__ == "__main__":
             "mk_manifest_PE",
             "trim_pos_deblur",
             "get_sequencing_platform",
+            "batch_get_sequencing_platforms",
             "adaptive_tail_trim",
             "check_quality_diversity",
             "sanitize_fastq",
@@ -1568,6 +1649,7 @@ if __name__ == "__main__":
     parser.add_argument("--OutputDir", help="Output directory for generated files")
     parser.add_argument("--srr_id", help="SRA accession number")
     parser.add_argument("--bioproject_id", help="BioProject ID (required for CNCB/CRR accessions)")
+    parser.add_argument("--pairs_file", help="TSV file with dataset_id<TAB>srr_id[<TAB>bioproject_id] per line")
     parser.add_argument("--input_dir", help="Input directory (for adaptive_tail_trim)")
     parser.add_argument("--output_dir", help="Output directory (for adaptive_tail_trim)")
     parser.add_argument("--max_sample_reads", type=int, default=10000,
@@ -1633,6 +1715,9 @@ if __name__ == "__main__":
             print(platform)
         else:
             sys.exit(1)
+
+    elif args.function == "batch_get_sequencing_platforms":
+        batch_get_sequencing_platforms(args.pairs_file)
 
     elif args.function == "adaptive_tail_trim":
         adaptive_tail_trim(args.input_dir, args.output_dir, args.max_sample_reads)
