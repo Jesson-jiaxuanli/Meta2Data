@@ -568,6 +568,7 @@ for i in "${!Dataset_ID_sets[@]}"; do
                 # Quality-filter is skipped for Illumina — DADA2's error model
                 # handles quality directly, avoiding redundant double-filtering that
                 # causes excessive read loss.
+                local _skip_cleanup=false
                 fastq_path="$fastp_path"
                 export fastq_path
                 Common_SanitizeFastq
@@ -628,6 +629,8 @@ with open(manifest_path, 'w') as f:
 
                                     if python3 -c "import sys; sys.exit(0 if $final_reads_se / $raw_reads < 0.5 else 1)"; then
                                         echo "  ⚠️ WARNING: SE retention still < 50%. This dataset may have low-quality data."
+                                        echo "  Skipping cleanup to preserve intermediate files for debugging."
+                                        _skip_cleanup=true
                                         echo "$(date '+%Y-%m-%d %H:%M:%S') - $dataset_ID - LOW_QUALITY - PE: ${retention_pct}%, SE: ${retention_se}%" >> "$low_quality_log"
                                     fi
                                 fi
@@ -636,7 +639,11 @@ with open(manifest_path, 'w') as f:
                     fi
                 fi
 
-                Amplicon_Common_FinalFilesCleaning
+                if [[ "$_skip_cleanup" == true ]]; then
+                    echo "  [LOW_QUALITY] Intermediate files preserved in: ${dataset_path}/tmp/"
+                else
+                    Amplicon_Common_FinalFilesCleaning
+                fi
             fi
 
         elif [[ "$platform" == "LS454" ]]; then
