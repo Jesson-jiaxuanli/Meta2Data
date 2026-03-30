@@ -287,7 +287,7 @@ def trim_pos_deblur(file_path):
         print("None,None")
         return (None, None)
 
-    pct_25 = data_rows[2]  # row order: 2%, 9%, 25%, 50%, ...
+    pct_25 = data_rows[1]  # row order: 9%, 25%, 50%, 75%, ... (2% skipped in tsv[3:])
 
     # ── Step 3: sliding-window smoothing ──
     sm = [None] * L
