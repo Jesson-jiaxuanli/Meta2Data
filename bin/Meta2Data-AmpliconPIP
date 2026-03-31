@@ -223,8 +223,9 @@ if [[ "$TEST_MODE" == true ]]; then
         # Search paths (in order of preference)
         SEARCH_PATHS=(
             "${SCRIPT_DIR}/test/${TEST_FILE}"                    # Development/git repo
+            "${SCRIPT_DIR}/share/Meta2Data/test/${TEST_FILE}"    # pip install --target
             "/usr/local/share/Meta2Data/test/${TEST_FILE}"       # System install
-            "${HOME}/.local/share/Meta2Data/test/${TEST_FILE}"   # User install
+            "${HOME}/.local/share/Meta2Data/test/${TEST_FILE}"   # User install (pip install --user)
             "${CONDA_PREFIX}/share/Meta2Data/test/${TEST_FILE}"  # Conda install
             "${PREFIX}/share/Meta2Data/test/${TEST_FILE}"        # Alternative prefix
         )
