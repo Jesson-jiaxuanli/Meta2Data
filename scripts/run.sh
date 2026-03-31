@@ -584,12 +584,15 @@ for i in "${!Dataset_ID_sets[@]}"; do
                     if [[ -f "$denoised_table" ]]; then
                         final_reads=$(Count_Feature_Table_Reads "$denoised_table")
                         raw_reads=$(Count_Raw_Reads_Total "$raw_counts_file")
+                        # raw_reads counts all individual reads (R1+R2), but feature table counts
+                        # represent sequences (1 merged pair = 1 count). Use half for fair comparison.
+                        raw_pairs=$((raw_reads / 2))
 
-                        if [[ "$raw_reads" -gt 0 ]]; then
-                            retention_pct=$(python3 -c "print(f'{$final_reads / $raw_reads * 100:.1f}')")
-                            echo "  PE retention: ${retention_pct}% (${final_reads}/${raw_reads})"
+                        if [[ "$raw_pairs" -gt 0 ]]; then
+                            retention_pct=$(python3 -c "print(f'{$final_reads / $raw_pairs * 100:.1f}')")
+                            echo "  PE retention: ${retention_pct}% (${final_reads}/${raw_pairs})"
 
-                            if python3 -c "import sys; sys.exit(0 if $final_reads / $raw_reads < 0.5 else 1)"; then
+                            if python3 -c "import sys; sys.exit(0 if $final_reads / $raw_pairs < 0.5 else 1)"; then
                                 echo "  ⚠️ PE retention < 50%. Falling back to SE (forward reads only)..."
 
                                 # Clean up PE denoise outputs
@@ -624,10 +627,10 @@ with open(manifest_path, 'w') as f:
                                 denoised_table_se="${dataset_path}/tmp/step_05_denoise/${dataset_ID}-table-denoising.qza"
                                 if [[ -f "$denoised_table_se" ]]; then
                                     final_reads_se=$(Count_Feature_Table_Reads "$denoised_table_se")
-                                    retention_se=$(python3 -c "print(f'{$final_reads_se / $raw_reads * 100:.1f}')")
-                                    echo "  SE retention: ${retention_se}% (${final_reads_se}/${raw_reads})"
+                                    retention_se=$(python3 -c "print(f'{$final_reads_se / $raw_pairs * 100:.1f}')")
+                                    echo "  SE retention: ${retention_se}% (${final_reads_se}/${raw_pairs})"
 
-                                    if python3 -c "import sys; sys.exit(0 if $final_reads_se / $raw_reads < 0.5 else 1)"; then
+                                    if python3 -c "import sys; sys.exit(0 if $final_reads_se / $raw_pairs < 0.5 else 1)"; then
                                         echo "  ⚠️ WARNING: SE retention still < 50%. This dataset may have low-quality data."
                                         echo "  Skipping cleanup to preserve intermediate files for debugging."
                                         _skip_cleanup=true
@@ -640,6 +643,12 @@ with open(manifest_path, 'w') as f:
                 fi
 
                 if [[ "$_skip_cleanup" == true ]]; then
+                    # Copy final outputs but preserve intermediate files for debugging
+                    local _denoise="${dataset_path}/tmp/step_05_denoise"
+                    if [[ -f "${_denoise}/${dataset_ID}-table-denoising.qza" ]]; then
+                        cp "${_denoise}/${dataset_ID}-rep-seqs-denoising.qza" "${dataset_path}/${dataset_ID}-final-rep-seqs.qza"
+                        cp "${_denoise}/${dataset_ID}-table-denoising.qza" "${dataset_path}/${dataset_ID}-final-table.qza"
+                    fi
                     echo "  [LOW_QUALITY] Intermediate files preserved in: ${dataset_path}/tmp/"
                 else
                     Amplicon_Common_FinalFilesCleaning
