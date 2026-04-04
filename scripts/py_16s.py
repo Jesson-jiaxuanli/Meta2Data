@@ -818,8 +818,8 @@ def check_quality_diversity(fastq_dir, n_samples=3, n_reads=1000):
     Checks up to n_samples FASTQ files, reading n_reads from each. Counts the
     number of unique Phred quality ASCII characters across all sampled reads.
 
-    Threshold: >= 10 unique quality values → "normal" (DADA2 viable)
-               <  10 unique quality values → "degraded" (use VSEARCH instead)
+    Threshold: > 1 unique quality value  → "normal" (DADA2 viable)
+               == 1 unique quality value  → "degraded" (dummy scores, use VSEARCH instead)
 
     Args:
         fastq_dir: Directory containing FASTQ files
@@ -855,13 +855,12 @@ def check_quality_diversity(fastq_dir, n_samples=3, n_reads=1000):
                 all_qual_chars.update(qual)
 
     n_unique = len(all_qual_chars)
-    threshold = 10
-    status = "normal" if n_unique >= threshold else "degraded"
+    status = "degraded" if n_unique <= 1 else "normal"
 
     print(f"  Quality diversity: {n_unique} unique Q values from "
           f"{len(sample_files)} files x {n_reads} reads", file=sys.stderr)
     print(f"  Unique Q chars: {sorted(all_qual_chars)}", file=sys.stderr)
-    print(f"  Status: {status} (threshold >= {threshold})", file=sys.stderr)
+    print(f"  Status: {status} (degraded = only 1 unique Q value)", file=sys.stderr)
 
     print(f"QUALITY_STATUS={status}")
     print(f"UNIQUE_QUALS={n_unique}")

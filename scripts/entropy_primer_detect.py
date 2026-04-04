@@ -83,6 +83,24 @@ def _iter_fastq(handle):
 # Step 1: Read & pre-filter
 # ===========================================================================
 
+def _is_degraded_quality(filepath, n_reads=1000):
+    """
+    Check if a FASTQ file has degraded (dummy) quality scores.
+    Degraded = only 1 unique quality character across sampled reads,
+    meaning scores are placeholder values (e.g., all '#' from SRA/ENA
+    for old 454 data). Quality filtering is meaningless for such data.
+    """
+    qual_chars = set()
+    count = 0
+    with _open_fq(filepath) as fh:
+        for _header, _seq, _plus, qual in _iter_fastq(fh):
+            qual_chars.update(qual)
+            count += 1
+            if count >= n_reads:
+                break
+    return len(qual_chars) <= 1
+
+
 def _avg_quality(qual_str):
     """Average Phred quality score (Phred+33 encoding)."""
     if not qual_str:
@@ -124,14 +142,14 @@ def _read_entropy(seq):
 
 def read_and_filter(filepath, min_len=50,
                     min_avg_qual=20, min_complexity=0.3,
-                    min_entropy=1.0):
+                    min_entropy=1.0, skip_qual=False):
     """
     Step 1: Read ALL reads from a FASTQ file, applying quality filters.
     Uses the entire first sample for maximum species diversity in the
     frequency matrix, which improves primer boundary accuracy.
     Filters:
       - Length >= min_len
-      - Average Phred quality >= min_avg_qual
+      - Average Phred quality >= min_avg_qual (skipped if skip_qual=True)
       - K-mer complexity >= min_complexity (unique 2-mers / 16)
       - Shannon entropy >= min_entropy (base composition diversity)
     Returns list of (seq_string, qual_string) tuples.
@@ -147,7 +165,7 @@ def read_and_filter(filepath, min_len=50,
             if len(seq) < min_len:
                 disc_len += 1
                 continue
-            if _avg_quality(qual) < min_avg_qual:
+            if not skip_qual and _avg_quality(qual) < min_avg_qual:
                 disc_qual += 1
                 continue
             if _sequence_complexity(seq) < min_complexity:
@@ -160,6 +178,9 @@ def read_and_filter(filepath, min_len=50,
             reads.append((seq, qual))
 
     print(f"  Scanned {total} reads, kept {len(reads)}", file=sys.stderr)
+    if skip_qual:
+        print(f"  Quality filtering: SKIPPED (degraded/dummy scores)",
+              file=sys.stderr)
     print(f"  Discarded: {disc_len} (length<{min_len}), "
           f"{disc_qual} (avgQ<{min_avg_qual}), "
           f"{disc_cplx} (complexity<{min_complexity}), "
@@ -792,11 +813,11 @@ def detect_for_reads(reads, label, database):
     return result
 
 
-def detect_for_file(filepath, label, database):
+def detect_for_file(filepath, label, database, skip_qual=False):
     """Run Steps 1-6 on a single FASTQ file. Returns result dict."""
     print(f"\n[Step 1] Reading and filtering reads from "
           f"{os.path.basename(filepath)} ...", file=sys.stderr)
-    reads = read_and_filter(filepath)
+    reads = read_and_filter(filepath, skip_qual=skip_qual)
     if not reads:
         print("  ERROR: No reads passed filters", file=sys.stderr)
         return dict(detected=False, primer_length=0, consensus="",
@@ -865,11 +886,20 @@ def main():
               file=sys.stderr)
 
     # ------------------------------------------------------------------
+    # Auto-detect degraded quality scores (e.g., 454 data from SRA/ENA
+    # with dummy placeholder values). Skip quality filtering if degraded.
+    # ------------------------------------------------------------------
+    skip_qual = _is_degraded_quality(first_file)
+    if skip_qual:
+        print(f"\n  Degraded quality scores detected (single unique Q value) "
+              f"— skipping quality filter", file=sys.stderr)
+
+    # ------------------------------------------------------------------
     # Step 1: Read & filter first R1 sample
     # ------------------------------------------------------------------
     print(f"\n[Step 1] Reading and filtering reads from "
           f"{os.path.basename(first_file)} ...", file=sys.stderr)
-    r1_reads = read_and_filter(first_file)
+    r1_reads = read_and_filter(first_file, skip_qual=skip_qual)
     if not r1_reads:
         print("  ERROR: No reads passed filters", file=sys.stderr)
         sys.exit(1)
@@ -992,7 +1022,8 @@ def main():
 
         r2_result = None
         if mode == "PE" and second_file:
-            r2_result = detect_for_file(second_file, "R2", PRIMERS_R)
+            r2_result = detect_for_file(second_file, "R2", PRIMERS_R,
+                                       skip_qual=skip_qual)
 
         # Summary
         print(f"\n{'=' * 60}", file=sys.stderr)
