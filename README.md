@@ -18,50 +18,63 @@ If you are running the AmpliconPIP or ggCOMBO functions on a server, please ensu
 
 ## Installation
 
-### Step 1: Create Conda Environment
+Meta2Data layers itself on top of a user-provided QIIME2 2024.10 amplicon
+environment. It does NOT ship its own conda environment file — you install
+QIIME2 once, then Meta2Data plus two native binaries on top.
 
-Copy the **env.yml** to your device.
-The env.yml includes all dependencies (QIIME2, vsearch, fastp, git, pip, sra-tools, seqkit, etc.), but not Meta2Data itself.
+### Step 1: Install QIIME2
+
+Follow QIIME2's official instructions to install the **2024.10 amplicon
+distribution**, then activate the resulting environment:
 
 ```bash
-conda env create -f env.yml
-conda activate env
+conda activate qiime2-amplicon-2024.10
 ```
+
+See https://docs.qiime2.org/2024.10/install/ for the current recommended
+procedure.
 
 ### Step 2: Install Meta2Data
 
-#### Option A: Install to a custom directory (Recommended for HPC / read-only conda)
-
-If your conda environment is read-only (e.g., TYKKY containers on HPC), install to a writable directory:
-
-```bash
-pip install --no-deps --target /path/to/Meta2Data \
-    git+https://github.com/LinyangSun/Meta2Data.git@main
-
-export PATH="/path/to/Meta2Data/bin:$PATH"
-```
-
-`--no-deps` skips dependency installation since all required packages are already provided by the conda environment.
-
-#### Option B: Install into conda environment
-
-```bash
-pip install --no-deps git+https://github.com/LinyangSun/Meta2Data.git@main
-```
-
-#### Option C: Development install (local clone)
+Clone the repo and install in editable mode. The only Python dependency
+Meta2Data pulls on top of QIIME2 is `biopython` (safe pure-Python install):
 
 ```bash
 git clone https://github.com/LinyangSun/Meta2Data.git
 cd Meta2Data
-pip install --no-deps -e .
+pip install -e .
 ```
 
-#### Verify installation
+### Step 3: Install the two native binaries QIIME2 does not ship
+
+`scripts/install_binaries.sh` downloads prebuilt Linux static binaries for
+`vsearch 2.30.0` and `fastp 0.24.0` directly from their upstream release
+pages (no compilation, no extra conda packages) and drops them into
+`<repo>/vendor/bin/`:
+
+```bash
+bash scripts/install_binaries.sh
+```
+
+The script is idempotent — re-run it anytime without side effects. Meta2Data
+entry scripts automatically prepend `<repo>/vendor/bin` to `PATH` at startup,
+so you never have to edit your shell config. Use
+`bash scripts/install_binaries.sh --help` for `--prefix` and `--force`.
+
+### Step 4: Verify installation
+
+Run the built-in dependency check (part of `--test` mode — see [Case 4](#case-4-test-mode--quick-validation)):
 
 ```bash
 Meta2Data --help
+bash scripts/check_dependencies.sh
 ```
+
+`check_dependencies.sh` inspects four layers — pipeline binaries, system
+utilities, QIIME2 plugins, and Python packages — and prints a per-layer
+report of anything missing with the exact install command to fix it. The
+same check runs automatically at the top of every `AmpliconPIP --test`
+invocation.
 
 ## Requirements
 
@@ -236,7 +249,7 @@ Optional:
 Search NCBI for gut microbiome 16S studies, download & process data, then assign taxonomy.
 
 ```bash
-conda activate Meta2Data
+conda activate qiime2-amplicon-2024.10
 
 # Step 1: Search and download metadata by keywords
 Meta2Data MetaDL \
@@ -267,7 +280,7 @@ Meta2Data ggCOMBO \
 You already have a list of BioProject IDs and want to process them end-to-end.
 
 ```bash
-conda activate Meta2Data
+conda activate qiime2-amplicon-2024.10
 
 # Step 1: Download metadata from a folder of BioProject ID files
 Meta2Data MetaDL \
@@ -297,7 +310,7 @@ Meta2Data ggCOMBO \
 Skip the MetaDL step when you already have a metadata CSV file ready.
 
 ```bash
-conda activate Meta2Data
+conda activate qiime2-amplicon-2024.10
 
 # Custom column names matching your CSV headers
 Meta2Data AmpliconPIP \
@@ -310,12 +323,19 @@ Meta2Data AmpliconPIP \
 
 ### Case 4: Test Mode — Quick Validation
 
-Verify the pipeline works before running on your full dataset.
+Verify the pipeline works before running on your full dataset. Every
+`AmpliconPIP --test` invocation starts with a **pre-flight dependency
+check** that inspects vendor binaries (`vsearch`, `fastp`), system
+utilities, QIIME2 plugins, and Python packages, and aborts with a per-layer
+report and exact install commands if anything is missing. Fix the missing
+items and re-run — the check itself is idempotent and costs ~1 second.
 
 ```bash
-conda activate Meta2Data
+conda activate qiime2-amplicon-2024.10
 
-# Use built-in test data (fastest way to verify installation)
+# Use built-in test data (fastest way to verify installation).
+# The dependency check runs first; if everything is satisfied you'll see
+# `[check] All dependencies satisfied.` before the test pipeline starts.
 Meta2Data AmpliconPIP --test -t 8
 
 # Or test with your own metadata (subsets to 2 SRA per BioProject)
@@ -325,6 +345,9 @@ Meta2Data AmpliconPIP --test \
     --col-sra Run \
     -o test_output/ \
     -t 8
+
+# Run the dependency check alone, without launching the pipeline.
+bash scripts/check_dependencies.sh
 ```
 
 ### Case 5: Taxonomy Assignment Only (AmpliconPIP Already Complete)
@@ -332,7 +355,7 @@ Meta2Data AmpliconPIP --test \
 Run ggCOMBO independently on existing AmpliconPIP results, e.g., to compare databases.
 
 ```bash
-conda activate Meta2Data
+conda activate qiime2-amplicon-2024.10
 
 # GreenGenes2 (default)
 Meta2Data ggCOMBO \
@@ -363,12 +386,35 @@ Meta2Data ggCOMBO \
     -t 16
 ```
 
+> **Note on `--db-type gsr`** — GSR-DB's upstream ships a pre-trained
+> classifier pickled against an older scikit-learn and cannot be trusted with
+> QIIME2 2024.10's sklearn 1.4.2. ggCOMBO therefore downloads only the raw
+> reference tarball (seqs + taxa) and trains a fresh Naive Bayes classifier
+> **locally** on first `--dl` run via
+> `qiime feature-classifier fit-classifier-naive-bayes`.
+>
+> - **First run**: add ~15–40 minutes and up to ~20 GB peak RAM for the one-time
+>   training step. Don't interrupt it — partial artifacts are cleaned up on
+>   error but you'll restart from scratch.
+> - **Subsequent `--dl` runs**: the existing `classifier_GSR-DB_full-16S.qza`
+>   is validated and reused. Zero extra cost.
+> - **QIIME2 / sklearn upgrades**: if you later upgrade to a QIIME2 release
+>   that bumps scikit-learn to a new major version (e.g. 1.5.x+), delete the
+>   cached classifier and re-run `--dl` to retrain against the new sklearn:
+>   ```bash
+>   rm ~/databases/gsr/classifier_GSR-DB_full-16S.qza
+>   Meta2Data ggCOMBO --db ~/databases/gsr --db-type gsr --dl -i ... -t 16
+>   ```
+>
+> `--db-type greengenes` and `--db-type silva` are unaffected: their upstream
+> classifiers are already version-matched to QIIME2 2024.10.
+
 ### Case 6: Keyword Search with Multiple Terms
 
 Search with broad keyword sets covering multiple organisms and fields.
 
 ```bash
-conda activate Meta2Data
+conda activate qiime2-amplicon-2024.10
 
 # Define keyword arrays
 field=("Bacteria" "Microbiome" "Metagenomics" "Metabarcoding")
@@ -389,7 +435,7 @@ Meta2Data MetaDL \
 For long-running jobs on HPC systems, ensure sufficient time allocation.
 
 ```bash
-conda activate Meta2Data
+conda activate qiime2-amplicon-2024.10
 
 # Large-scale processing: increase threads and parallelism
 Meta2Data AmpliconPIP \
@@ -424,22 +470,24 @@ Meta2Data ggCOMBO \
 
 ```
 Meta2Data/
-├── bin/                    # Command-line entry points
-│   ├── Meta2Data           # Main dispatcher
-│   ├── Meta2Data-MetaDL    # Metadata download
-│   ├── Meta2Data-AmpliconPIP # Amplicon pipeline
-│   └── Meta2Data-ggCOMBO   # Merge & taxonomy assignment
-├── scripts/                # Processing scripts
-│   ├── AmpliconFunction.sh # Amplicon processing functions
-│   ├── run.sh             # AmpliconPIP orchestrator
-│   ├── taxonomy.sh        # ggCOMBO taxonomy pipeline
-│   ├── metadata_downloader.py # Python metadata downloader
-│   └── py_16s.py          # 16S data processing
-├── test/                   # Test data
-├── docs/                   # Documentation & reference sequences
-├── env.yml                 # Conda environment
-├── pyproject.toml          # Python package config
-└── setup.py               # Script installation config
+├── bin/                        # Command-line entry points
+│   ├── Meta2Data               # Main dispatcher
+│   ├── Meta2Data-MetaDL        # Metadata download
+│   ├── Meta2Data-AmpliconPIP   # Amplicon pipeline
+│   └── Meta2Data-ggCOMBO       # Merge & taxonomy assignment
+├── scripts/                    # Processing scripts
+│   ├── AmpliconFunction.sh     # Amplicon processing functions
+│   ├── run.sh                  # AmpliconPIP orchestrator
+│   ├── taxonomy.sh             # ggCOMBO taxonomy pipeline
+│   ├── metadata_downloader.py  # Python metadata downloader
+│   ├── py_16s.py               # 16S data processing
+│   ├── install_binaries.sh     # Downloads vsearch + fastp native binaries
+│   └── check_dependencies.sh   # Pre-flight dependency check
+├── vendor/                     # (gitignored) vsearch/fastp from install_binaries.sh
+├── test/                       # Test data
+├── docs/                       # Documentation & reference sequences
+├── pyproject.toml              # Python package config
+└── setup.py                    # Script installation config
 ```
 
 ### Contributing

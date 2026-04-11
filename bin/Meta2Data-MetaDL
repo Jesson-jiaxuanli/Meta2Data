@@ -18,6 +18,9 @@ else
     exit 1
 fi
 
+VENDOR_BIN="$(dirname "$SCRIPTS")/vendor/bin"
+[[ -d "$VENDOR_BIN" ]] && export PATH="${VENDOR_BIN}:${PATH}"
+
 show_help() {
     cat << EOF
 Usage: Meta2Data MetaDL-v2 [options]
@@ -68,7 +71,7 @@ Input Format:
 
     ALL BioProjects will be processed through:
       1. NCBI download (BioSample + SRA via Entrez API)
-      2. iSeq download (CNCB/GSA metadata if available)
+      2. CNCB/GSA metadata download (if available, via NGDC HTTP API)
 
 Output Files:
     Main output:
@@ -115,7 +118,7 @@ Examples:
 Workflow:
     1. Read all BioProject IDs from input folder (no classification)
     2. Parallel download from NCBI (BioSample + SRA) - ALL projects
-    3. Sequential download from iSeq (CNCB/GSA) - ALL projects
+    3. Sequential download from CNCB/GSA (NGDC HTTP API) - ALL projects
     4. Parse and merge NCBI data (SRA + BioSample)
     5. Parse CNCB data (Excel/CSV conversion)
     6. Final merge: Combine NCBI + CNCB datasets
@@ -135,13 +138,11 @@ Performance:
 
 Note:
     - Get free API key at: https://www.ncbi.nlm.nih.gov/account/
-    - iSeq must be installed (conda install -c bioconda iseq)
     - Interrupted runs can be resumed automatically
 
 EOF
 }
 
-# Default parameters
 INPUT=""
 OUTPUT=""
 API_KEY=""
@@ -151,7 +152,6 @@ FIELD=()
 ORGANISM=()
 OPT=()
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         -i|--input)
@@ -207,7 +207,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Strip trailing slashes from user-provided paths
 INPUT="${INPUT%/}"
 OUTPUT="${OUTPUT%/}"
 
@@ -218,10 +217,8 @@ if [[ -z "$OUTPUT" ]]; then
     exit 1
 fi
 
-# Create output directory
 mkdir -p "$OUTPUT"
 
-# Validate mode-specific requirements
 if [[ "$KEYWORDS" == "true" ]]; then
     # Keywords mode
     if [[ ${#FIELD[@]} -eq 0 || ${#ORGANISM[@]} -eq 0 ]]; then
@@ -245,26 +242,22 @@ if [[ "$KEYWORDS" == "true" ]]; then
     echo "===================================================="
     echo ""
 
-    # Build Python command for keywords mode
     PYTHON_CMD=(
         python3 "${SCRIPTS}/metadata_downloader.py"
         --output "$OUTPUT"
         --keywords
     )
 
-    # Add field terms
     PYTHON_CMD+=(--field)
     for term in "${FIELD[@]}"; do
         PYTHON_CMD+=("$term")
     done
 
-    # Add organism terms
     PYTHON_CMD+=(--organism)
     for term in "${ORGANISM[@]}"; do
         PYTHON_CMD+=("$term")
     done
 
-    # Add optional terms if provided
     if [[ ${#OPT[@]} -gt 0 ]]; then
         PYTHON_CMD+=(--opt)
         for term in "${OPT[@]}"; do
@@ -306,7 +299,6 @@ else
     echo "====================================================="
     echo ""
 
-    # Build Python command for BioProject input mode
     PYTHON_CMD=(
         python3 "${SCRIPTS}/metadata_downloader.py"
         --input "$INPUT"
@@ -314,7 +306,6 @@ else
     )
 fi
 
-# Add common optional parameters
 if [[ -n "$API_KEY" ]]; then
     PYTHON_CMD+=(--api-key "$API_KEY")
 fi
@@ -323,7 +314,6 @@ if [[ -n "$MAX_WORKERS" ]]; then
     PYTHON_CMD+=(--max-workers "$MAX_WORKERS")
 fi
 
-# Call the unified Python script V2
 "${PYTHON_CMD[@]}"
 
 EXIT_CODE=$?

@@ -9,21 +9,16 @@ from setuptools import setup
 import os
 import glob
 
-# Get the directory containing this setup.py
 here = os.path.abspath(os.path.dirname(__file__))
 
-# Prepare data files
 data_files = []
 
-# Test CSV file
 test_csv = os.path.join(here, 'test', 'ampliconpiptest.csv')
 if os.path.exists(test_csv):
     data_files.append(('share/Meta2Data/test', ['test/ampliconpiptest.csv']))
 
-# Docs directory (includes reference sequences and documentation)
 docs_files = glob.glob(os.path.join(here, 'docs', '*.fas')) + glob.glob(os.path.join(here, 'docs', '*.json'))
 if docs_files:
-    # Convert to relative paths for setuptools
     docs_files = [os.path.relpath(f, here) for f in docs_files]
     data_files.append(('share/Meta2Data/docs', docs_files))
 

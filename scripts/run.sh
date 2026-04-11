@@ -103,13 +103,27 @@ fi
 export THREADS_PER_DATASET
 export cpu=$THREADS_PER_DATASET
 
-# Source function library (AmpliconFunction.sh contains all processing functions)
 if [[ -f "${SCRIPTS}/AmpliconFunction.sh" ]]; then
     source "${SCRIPTS}/AmpliconFunction.sh"
 else
     echo "Error: AmpliconFunction.sh not found at ${SCRIPTS}/AmpliconFunction.sh"
     exit 1
 fi
+
+_fastp_se_adapter_remove() {
+    local ori_fastq_path="$1"
+    local adapter_removed_path="$2"
+    for fq in "${ori_fastq_path}/"*.fastq*; do
+        [[ -f "$fq" ]] || continue
+        fastp -i "$fq" \
+              -o "${adapter_removed_path}/$(basename "$fq")" \
+              --disable_quality_filtering \
+              --disable_length_filtering \
+              -w "$cpu" \
+              -j "${adapter_removed_path}/fastp.json" \
+              -h "${adapter_removed_path}/fastp.html"
+    done
+}
 
 cd "$OUTPUT" || exit 1
 mkdir -p "${OUTPUT}/logs"
@@ -123,7 +137,6 @@ echo "PHASE 1: Dataset Preparation"
 echo "Started: $(date)"
 echo "========================================="
 
-# Step 1: Generate dataset ID list
 if ! python "${SCRIPTS}/py_16s.py" GenerateDatasetsIDsFile --FilePath "$METADATA" --Bioproject "$COL_BIOPROJECT" --OutputDir "$OUTPUT"; then
     echo "❌ ERROR: Failed to generate dataset IDs, please check your metadata file and column names for BioProject."
     exit 1
@@ -136,7 +149,6 @@ if [ ${#Dataset_ID_sets[@]} -eq 0 ]; then
     exit 1
 fi
 
-# Step 2: Generate SRA file list
 if ! python "${SCRIPTS}/py_16s.py" GenerateSRAsFile --FilePath "$METADATA" --Bioproject "$COL_BIOPROJECT" --SRA_Number "$COL_SRA" --OutputDir "$OUTPUT"; then
     echo "❌ ERROR: Failed to generate SRA file lists, please check your metadata file and column names for SRA."
     exit 1
@@ -479,16 +491,7 @@ for i in "${!Dataset_ID_sets[@]}"; do
                         done
                     fi
                 else
-                    for fq in "${ori_fastq_path}/"*.fastq*; do
-                        [[ -f "$fq" ]] || continue
-                        fastp -i "$fq" \
-                              -o "${adapter_removed_path}/$(basename "$fq")" \
-                              --disable_quality_filtering \
-                              --disable_length_filtering \
-                              -w "$cpu" \
-                              -j "${adapter_removed_path}/fastp.json" \
-                              -h "${adapter_removed_path}/fastp.html"
-                    done
+                    _fastp_se_adapter_remove "$ori_fastq_path" "$adapter_removed_path"
                 fi
 
                 # ── Step C: Entropy-based primer detection & trimming ──
@@ -699,16 +702,7 @@ with open(manifest_path, 'w') as f:
                 adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
                 mkdir -p "$adapter_removed_path"
 
-                for fq in "${ori_fastq_path}/"*.fastq*; do
-                    [[ -f "$fq" ]] || continue
-                    fastp -i "$fq" \
-                          -o "${adapter_removed_path}/$(basename "$fq")" \
-                          --disable_quality_filtering \
-                          --disable_length_filtering \
-                          -w "$cpu" \
-                          -j "${adapter_removed_path}/fastp.json" \
-                          -h "${adapter_removed_path}/fastp.html"
-                done
+                _fastp_se_adapter_remove "$ori_fastq_path" "$adapter_removed_path"
 
                 mkdir -p "$fastp_path"
                 python3 "${SCRIPTS}/entropy_primer_detect.py" \
@@ -801,16 +795,7 @@ with open(manifest_path, 'w') as f:
                 adapter_removed_path="${dataset_path}/tmp/step_01_adapter_removed"
                 mkdir -p "$adapter_removed_path"
 
-                for fq in "${ori_fastq_path}/"*.fastq*; do
-                    [[ -f "$fq" ]] || continue
-                    fastp -i "$fq" \
-                          -o "${adapter_removed_path}/$(basename "$fq")" \
-                          --disable_quality_filtering \
-                          --disable_length_filtering \
-                          -w "$cpu" \
-                          -j "${adapter_removed_path}/fastp.json" \
-                          -h "${adapter_removed_path}/fastp.html"
-                done
+                _fastp_se_adapter_remove "$ori_fastq_path" "$adapter_removed_path"
 
                 mkdir -p "$fastp_path"
                 python3 "${SCRIPTS}/entropy_primer_detect.py" \
@@ -886,16 +871,7 @@ with open(manifest_path, 'w') as f:
                 Common_CountRawReads "$dataset_path" "$sra_file_name"
 
                 mkdir -p "$adapter_removed_path"
-                for fq in "${ori_fastq_path}/"*.fastq*; do
-                    [[ -f "$fq" ]] || continue
-                    fastp -i "$fq" \
-                          -o "${adapter_removed_path}/$(basename "$fq")" \
-                          --disable_quality_filtering \
-                          --disable_length_filtering \
-                          -w "$cpu" \
-                          -j "${adapter_removed_path}/fastp.json" \
-                          -h "${adapter_removed_path}/fastp.html"
-                done
+                _fastp_se_adapter_remove "$ori_fastq_path" "$adapter_removed_path"
 
                 rm -rf "$ori_fastq_path"
             fi

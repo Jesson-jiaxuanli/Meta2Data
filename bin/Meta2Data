@@ -14,16 +14,13 @@ Run 'Meta2Data <command> --help' for command-specific options.
 EOF
 }
 
-# Check if subcommand is provided
 if [[ $# -eq 0 ]]; then
     show_help
     exit 1
 fi
 
 COMMAND=$1
-shift  # Remove first argument, pass remaining to subcommand
-
-# Dispatch to corresponding subcommand
+shift
 case $COMMAND in
     MetaDL)
         Meta2Data-MetaDL "$@"

@@ -86,7 +86,6 @@ fi
 echo "Found ${#all_folders[@]} dataset folder(s)"
 echo ""
 
-# Collect tables and sequences
 echo ">>> Step 3: Collecting QZA files..."
 
 ALL_TABLES=()
@@ -126,7 +125,6 @@ echo ""
 echo "Successfully collected ${#ALL_TABLES[@]} dataset(s)"
 echo ""
 
-# Merge feature tables
 echo ">>> Step 4: Merging feature tables..."
 MERGED_TABLE="${MERGED_DIR}/merged-table.qza"
 rm -f "$MERGED_TABLE"
@@ -141,7 +139,6 @@ fi
 echo "✓ Tables merged"
 echo ""
 
-# Merge sequences
 echo ">>> Step 5: Merging representative sequences..."
 MERGED_REP_SEQS="${MERGED_DIR}/merged-rep-seqs.qza"
 rm -f "$MERGED_REP_SEQS"
@@ -156,7 +153,6 @@ fi
 echo "✓ Sequences merged"
 echo ""
 
-# Generate summary
 echo ">>> Step 6: Generating merged table summary..."
 rm -f "${MERGED_DIR}/merged-table-summary.qzv"
 if qiime feature-table summarize \
@@ -188,7 +184,6 @@ fi
 echo "✓ Sequences oriented"
 echo ""
 
-# Filter merged table to keep only features present in oriented sequences
 echo ">>> Step 8: Filtering table to oriented features..."
 ORIENTED_TABLE="${DB_SUBDIR}/merged-table-oriented.qza"
 
@@ -203,8 +198,6 @@ fi
 echo "✓ Table filtered to oriented features"
 echo ""
 
-# Taxonomy assignment via pre-trained Naive Bayes classifier (sklearn)
-# Uses the oriented sequences as input.
 echo ">>> Step 9: Assigning taxonomy via pre-trained Naive Bayes classifier..."
 echo "Using $cpu CPU threads, confidence=${CONFIDENCE}"
 MERGED_TAXONOMY="${DB_SUBDIR}/merged-taxonomy.qza"

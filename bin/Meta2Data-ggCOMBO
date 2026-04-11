@@ -34,6 +34,9 @@ if ! SCRIPTS=$(find_scripts_dir); then
     exit 1
 fi
 
+VENDOR_BIN="$(dirname "$SCRIPTS")/vendor/bin"
+[[ -d "$VENDOR_BIN" ]] && export PATH="${VENDOR_BIN}:${PATH}"
+
 show_help() {
     cat << EOF
 Usage: Meta2Data ggCOMBO [options]
@@ -80,9 +83,12 @@ Database files per --db-type (downloaded with --dl):
       silva-138-99-seqs.qza                      (reference sequences)
       silva-138-99-tax.qza                       (reference taxonomy)
     gsr:
-      classifier_GSR-DB_full-16S.qza             (NB classifier)
       GSR-DB_full-16S_filt_seqs.qza              (reference sequences)
       GSR-DB_full-16S_filt_taxa.qza              (reference taxonomy)
+      classifier_GSR-DB_full-16S.qza             (NB classifier, trained
+                                                 locally on first --dl run
+                                                 against the current sklearn;
+                                                 ~15-40 min one-time cost)
     All types also require:
       sepp-refs-gg-13-8.qza                      (SEPP reference tree, always GG2)
 
@@ -296,11 +302,13 @@ if [[ "$ENABLE_DL" == true ]]; then
             ;;
         gsr)
             GSR_BASE="https://manichanh.vhir.org/gsrdb/"
+            # GSR-DB's upstream classifier is pickled against an older sklearn
+            # and is not reliable with QIIME2 2024.10's sklearn 1.4.2. We only
+            # download the raw reference tarball (seqs + taxa) and train a
+            # fresh Naive Bayes classifier locally after extraction.
             DL_FILES=(
-                "classifier_GSR-DB_full-16S.qza|${GSR_BASE}|"
                 "sepp-refs-gg-13-8.qza|${SEPP_URL}|"
             )
-            # GSR ref seqs and taxonomy come from a tarball
             GSR_TARBALL="GSR-DB_full-16S.tar.gz"
             GSR_TARBALL_PATH="${DB_DIR}/${GSR_TARBALL}"
             ;;
@@ -355,6 +363,36 @@ if [[ "$ENABLE_DL" == true ]]; then
                 exit 1
             fi
             echo "Downloaded and extracted GSR-DB reference files"
+        fi
+
+        # Train the Naive Bayes classifier locally against the currently
+        # installed sklearn version. GSR-DB's upstream pre-trained classifier
+        # was pickled against an older sklearn and is not reliable here.
+        # One-time cost; subsequent runs reuse the validated artifact.
+        if validate_qza "$NB_CLASSIFIER"; then
+            echo "Valid GSR classifier exists, skipping training: $(basename "$NB_CLASSIFIER")"
+        else
+            [[ -f "$NB_CLASSIFIER" ]] && echo "Existing classifier is invalid, retraining"
+            rm -f "$NB_CLASSIFIER"
+            echo ""
+            echo "Training GSR-DB Naive Bayes classifier locally."
+            echo "This is a one-time step (~15-40 min, peak RAM ~20 GB)."
+            echo ""
+            if ! qiime feature-classifier fit-classifier-naive-bayes \
+                --i-reference-reads "$REF_SEQS" \
+                --i-reference-taxonomy "$REF_TAX" \
+                --o-classifier "$NB_CLASSIFIER" \
+                --verbose; then
+                echo "ERROR: GSR classifier training failed"
+                rm -f "$NB_CLASSIFIER"
+                exit 1
+            fi
+            if ! validate_qza "$NB_CLASSIFIER"; then
+                echo "ERROR: Trained classifier is corrupt: $(basename "$NB_CLASSIFIER")"
+                rm -f "$NB_CLASSIFIER"
+                exit 1
+            fi
+            echo "GSR classifier trained and saved: $(basename "$NB_CLASSIFIER")"
         fi
     fi
 

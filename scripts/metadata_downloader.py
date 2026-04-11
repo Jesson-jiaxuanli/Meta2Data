@@ -262,7 +262,6 @@ def apply_camelcase_normalization(df):
                 else:
                     rename_map[col] = normalized
 
-    # Merge duplicate columns row-by-row
     for source_col, target_col in merge_needed.items():
         merged = []
         for idx in df.index:
@@ -1059,7 +1058,6 @@ def download_ncbi_metadata_from_biosamples(biosample_accessions, output_dir):
     """
     GROUP_ID = "BIOSAMPLE_INPUT"
 
-    # 1. Build UID -> original accession mapping (with validation)
     print("  Building BioSample UID mapping...")
     uid_to_original, all_uids, not_found = _build_biosample_uid_map(biosample_accessions)
 

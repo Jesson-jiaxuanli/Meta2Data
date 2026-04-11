@@ -16,7 +16,6 @@
 #   source scripts/AmpliconFunction.sh
 #
 # Author: Meta2Data Project
-# Date: $(date +%Y-%m-%d)
 #
 
 set -e
@@ -25,7 +24,6 @@ set -e
 ################################################################################
 #                         COMMON FUNCTIONS                                     #
 ################################################################################
-# Functions shared across all sequencing platforms
 
 Verify_Fastq_Integrity() {
     # Verify that a FASTQ file is valid (line count divisible by 4, has content).
@@ -529,7 +527,6 @@ Amplicon_Common_FinalFilesCleaning() {
         # Remove temporary directories but keep dataset_path itself
         find "$dataset_path" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
 
-        # Remove unwanted logs
         rm -f "${dataset_path%/}/"{denoising.log,fastp.html,fastp.json}
 
         rm -rf "${dataset_path%/}/ori_fastq" 2>/dev/null || true
@@ -613,9 +610,6 @@ Count_Raw_Reads_Total() {
 ################################################################################
 #                       ILLUMINA PLATFORM FUNCTIONS                            #
 ################################################################################
-# Functions for Illumina short-read sequencing data processing
-
-
 
 Amplicon_Illumina_QualityControlForQZA(){
     dataset_path="${dataset_path%/}/"
@@ -650,7 +644,6 @@ Amplicon_Illumina_DenosingDada2() {
     set -euo pipefail
     dataset_path="${dataset_path%/}/"
     cd "$dataset_path"
-    # Paths
     local base="${dataset_path%/}"
     local denoising_path="${base%/}/tmp/step_05_denoise/"
     local qf_vis_path="${base%/}/tmp/temp_file/QualityFilter_vis/"
@@ -1182,32 +1175,6 @@ Amplicon_Pacbio_ExtractReads() {
 #                         ONT PLATFORM FUNCTIONS                               #
 ################################################################################
 # Functions for Oxford Nanopore long-read sequencing data processing
-# TODO: These functions are placeholders and need to be implemented
-
-# Amplicon_ONT_PrimerDetectionAndQualityControl() {
-#     echo "TODO: Implement ONT primer detection and quality control"
-#     echo "  - Adapter trimming for ONT reads"
-#     echo "  - Quality filtering for ONT specific error profiles"
-#     echo "  - Primer detection and trimming"
-#     return 1
-# }
-
-# Amplicon_ONT_QualityControlForQZA() {
-#     echo "TODO: Implement ONT quality control for QZA"
-#     echo "  - Import ONT reads to QIIME2"
-#     echo "  - Quality filtering based on ONT characteristics"
-#     return 1
-# }
-
-# Amplicon_ONT_DenosingMethod() {
-#     echo "TODO: Implement ONT denoising method"
-#     echo "  - Evaluate denoising approaches for ONT (DADA2? Custom?)"
-#     echo "  - Handle ONT-specific error patterns"
-#     echo "  - Generate ASV/OTU table"
-#     return 1
-# }
-
-
 ################################################################################
 #                              END OF FILE                                     #
 ################################################################################

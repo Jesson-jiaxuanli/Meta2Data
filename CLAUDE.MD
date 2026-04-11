@@ -12,10 +12,7 @@ conda activate Meta2Data
 
 ```
 
-This ensures you have the correct environment and iSeq alias configured for all Meta2Data operations.
-
-never do:
-cd /test && source ~/anaconda3/etc/profile.d/conda.sh && conda activate Meta2Data 2>&1 && iseq -i 
+This ensures you have the correct environment configured for all Meta2Data operations.
 
 ## Project Structure
 
@@ -67,28 +64,43 @@ Workflow: SRA download → Quality control → Platform-specific processing → 
 
 ## Environment Setup
 
-### Conda (Recommended)
+**Platform:** Linux only (x86_64 or aarch64).
 
-**Environment Details:**
-- **Name**: `Meta2Data`
-- **Python**: 3.10
-- **Base**: QIIME2 2024.10 (Amplicon distribution)
+Meta2Data layers itself on top of a user-provided QIIME2 2024.10 amplicon
+environment. It does NOT ship its own env.yml or manage the QIIME2 install.
 
-**Included Software:**
-- QIIME2 2024.10 with all plugins
-- vsearch (deduplication, clustering, chimera removal)
-- fastp (quality control, adapter trimming)
-- seqkit (FASTQ/FASTA processing)
-- sra-tools (SRA download and conversion)
-- q2-greengenes2 (taxonomy database)
-- pandas, numpy, biopython, biom-format (data processing)
-- iseq (SRA/ENA/DDBJ/GSA download - see below for setup)
+**Three-step install:**
 
-**Activate:**
 ```bash
+# 1. Install QIIME2 2024.10 amplicon following QIIME2's official instructions,
+#    then activate it.
+conda activate qiime2-amplicon-2024.10
 
-conda activate Meta2Data
+# 2. Install Meta2Data (pulls in biopython via pip — safe on top of QIIME2).
+pip install -e .
+
+# 3. Download the two native binaries QIIME2 does not ship (vsearch, fastp).
+bash scripts/install_binaries.sh
 ```
+
+`install_binaries.sh` pulls prebuilt Linux static binaries from upstream
+releases (no compilation, no conda), drops them into `<repo>/vendor/bin/`,
+and is idempotent — re-run it anytime without side effects. The Meta2Data
+entry scripts auto-prepend `<repo>/vendor/bin` to `PATH` at startup, so you
+never have to touch your shell config. See `bash scripts/install_binaries.sh
+--help` for `--prefix` and `--force` overrides.
+
+**Software used at runtime:**
+- QIIME2 2024.10 amplicon distribution (provides `qiime` plugins, pandas,
+  numpy, requests, biom-format, cutadapt, and its own vsearch for plugin use)
+- `vsearch` 2.30.0 — installed by `install_binaries.sh`; used directly by the
+  DegradedQ pipeline (UNOISE3, uchime3, usearch_global)
+- `fastp` 0.24.0 — installed by `install_binaries.sh`; adapter removal and
+  quality filtering for all Illumina / 454 / Ion Torrent / PacBio inputs
+- `biopython` — installed as a pip dependency of Meta2Data; used for NCBI
+  Entrez queries
+- `wget`, `unzip`, `tar`, `gzip`, `md5sum` — expected to be present on any
+  standard Linux distribution
 
 
 

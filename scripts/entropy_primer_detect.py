@@ -692,12 +692,10 @@ def detect_for_reads(reads, label, database):
         return dict(detected=False, primer_length=0, consensus="",
                     message="No primer detected (no reads)")
 
-    # Step 2: Build frequency matrix
     print(f"\n[Step 2] Building frequency matrix (60 positions) ...",
           file=sys.stderr)
     freq_matrix = build_frequency_matrix(reads, num_positions=60)
 
-    # Step 3: Classify each position as C/D/V
     print(f"\n[Step 3] Classifying positions (C/D/V) ...", file=sys.stderr)
     states = classify_all_positions(freq_matrix)
     state_str = ''.join(states)
@@ -711,7 +709,6 @@ def detect_for_reads(reads, label, database):
         top = '  '.join(f"{b}:{f:.2f}" for b, f in paired[:2])
         print(f"    [{i:2d}] {states[i]}  {top}", file=sys.stderr)
 
-    # Step 4: Find primer boundary (CDV — used as fallback)
     cdv_max_len = 30
     print(f"\n[Step 4] Finding CDV primer boundary "
           f"(min=10bp, max={cdv_max_len}bp) ...", file=sys.stderr)
@@ -732,7 +729,6 @@ def detect_for_reads(reads, label, database):
     else:
         d_density = 0.0
 
-    # Step 5: Build 30bp consensus, then match against primer database
     print(f"\n[Step 5] Database matching (sliding window) ...",
           file=sys.stderr)
     consensus_30 = build_consensus_cdv(freq_matrix, states, 30)

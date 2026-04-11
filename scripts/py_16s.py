@@ -41,7 +41,6 @@ def GenerateDatasetsIDsFile(file_path, Bioproject, Data_SequencingPlatform=None,
     Returns:
         Array of dataset IDs
     """
-    # Use output directory if provided, otherwise use input file's directory
     if output_dir:
         directory_path = output_dir
     else:
@@ -49,7 +48,6 @@ def GenerateDatasetsIDsFile(file_path, Bioproject, Data_SequencingPlatform=None,
 
     df = pd.read_csv(file_path)
 
-    # Clean BioProject column
     if Bioproject in df.columns:
         df[Bioproject] = (
             df[Bioproject]
@@ -68,15 +66,12 @@ def GenerateDatasetsIDsFile(file_path, Bioproject, Data_SequencingPlatform=None,
             .str.replace('\n', '', regex=True)
             .str.replace('\t', '', regex=True)
         )
-        # Output both columns
         df_pair = (
             df[[Bioproject, Data_SequencingPlatform]]
             .dropna(subset=[Bioproject])
             .drop_duplicates()
         )
     else:
-        # Output only BioProject column (default behavior)
-        # Platform is detected dynamically later via get_sequencing_platform()
         df_pair = (
             df[[Bioproject]]
             .dropna(subset=[Bioproject])
@@ -100,14 +95,12 @@ def GenerateSRAsFile(file_path, Bioproject, SRA_Number, Biosample=None, output_d
         Biosample: (Optional) Column name for BioSample ID - if not provided, uses SRA_Number for naming
         output_dir: (Optional) Directory to write output files
     """
-    # Use output directory if provided, otherwise use input file's directory
     if output_dir:
         directory_path = output_dir
     else:
         directory_path = os.path.dirname(os.path.abspath(file_path))
     df = pd.read_csv(file_path)
 
-    # Determine which columns to clean
     columns_to_clean = [Bioproject, SRA_Number]
     if Biosample and Biosample in df.columns:
         columns_to_clean.append(Biosample)
@@ -122,7 +115,6 @@ def GenerateSRAsFile(file_path, Bioproject, SRA_Number, Biosample=None, output_d
                 .str.replace('\t', '', regex=True)
             )
 
-    # Create rename column: use Biosample if available, otherwise use SRA_Number
     if Biosample and Biosample in df.columns:
         df["rename"] = df[Bioproject] + '_' + df[Biosample]
     else:
@@ -177,7 +169,6 @@ def subset_meta_for_test(file_path, Bioproject, SRA_Number, output_dir=None, n=2
         print(f"Available columns: {', '.join(df.columns)}", file=sys.stderr)
         sys.exit(1)
 
-    # Keep first N SRA entries per BioProject
     subset = df.groupby(Bioproject, sort=False).head(n)
 
     out_path = os.path.join(directory_path, "test_subset_meta.csv")
@@ -347,11 +338,9 @@ def get_sequencing_platform(srr_id, bioproject_id=None):
         - CNCB queries require bioproject_id parameter (e.g., PRJCA040882)
         - Returns None if platform cannot be determined
     """
-    # Check if this is a CRR accession (CNCB/China)
     if srr_id and srr_id.startswith('CRR'):
         return _get_platform_from_cncb(srr_id, bioproject_id)
 
-    # Handle NCBI accessions (SRR/ERR/DRR)
     return _get_platform_from_ncbi(srr_id)
 
 
@@ -373,7 +362,7 @@ def _get_platform_from_cncb(crr_id, bioproject_id=None):
 
     Note:
         This is a copy/adaptation of MetaDL's CNCB query logic for AmpliconPIP use.
-        According to iSeq updates (2024), API endpoint changed from getRunInfo to getRunInfoByCra.
+        CNCB's API endpoint was changed from getRunInfo to getRunInfoByCra (2024).
     """
     import requests
     from io import StringIO
@@ -385,7 +374,6 @@ def _get_platform_from_cncb(crr_id, bioproject_id=None):
     print(f"  Attempting CNCB query with run ID: {crr_id}", file=sys.stderr)
 
     try:
-        # Try updated getRunInfoByCra endpoint with CRR ID
         url = f"{BASE_URL}/search/getRunInfoByCra"
         data = f'searchTerm=%26quot%3B{crr_id}%26quot%3BtotalDatas=9999%3BdownLoadCount=9999'
 
@@ -399,7 +387,6 @@ def _get_platform_from_cncb(crr_id, bioproject_id=None):
 
         csv_content = resp.text
         if csv_content.count('\n') >= 2:
-            # Successfully got data with run ID
             print(f"  ✓ getRunInfoByCra with CRR ID successful", file=sys.stderr)
             platform = _parse_cncb_platform_response(csv_content, crr_id)
             if platform:
@@ -412,7 +399,6 @@ def _get_platform_from_cncb(crr_id, bioproject_id=None):
         print(f"  Attempting CNCB query with BioProject: {bioproject_id}", file=sys.stderr)
 
         try:
-            # Try with BioProject using getRunInfoByCra
             url = f"{BASE_URL}/search/getRunInfoByCra"
             data = f'searchTerm=%26quot%3B{bioproject_id}%26quot%3BtotalDatas=9999%3BdownLoadCount=9999'
 
@@ -482,7 +468,6 @@ def _parse_cncb_platform_response(csv_content, target_run_id=None):
 
         print(f"  ✓ Retrieved {len(df)} runs from CNCB", file=sys.stderr)
 
-        # If we have a specific run ID, filter for it
         if target_run_id and 'Run' in df.columns:
             run_df = df[df['Run'] == target_run_id]
             if not run_df.empty:
@@ -491,19 +476,16 @@ def _parse_cncb_platform_response(csv_content, target_run_id=None):
             else:
                 print(f"Warning: Run {target_run_id} not found, using first run as fallback", file=sys.stderr)
 
-        # Look for platform information in common column names
         platform_columns = ['Platform', 'Instrument', 'Model', 'Sequencing Platform', 'instrument']
 
         for col in platform_columns:
             if col in df.columns:
                 platform_value = df[col].iloc[0] if not df[col].empty else None
                 if platform_value and str(platform_value) != 'nan':
-                    # Normalize platform names to match NCBI format
                     platform_str = str(platform_value).upper()
 
                     print(f"  Platform from CNCB: {platform_str}", file=sys.stderr)
 
-                    # Map common platform names
                     if 'ILLUMINA' in platform_str or 'HISEQ' in platform_str or 'NOVASEQ' in platform_str or 'MISEQ' in platform_str:
                         return 'ILLUMINA'
                     elif 'NANOPORE' in platform_str or 'MINION' in platform_str or 'PROMETHION' in platform_str:
@@ -515,7 +497,6 @@ def _parse_cncb_platform_response(csv_content, target_run_id=None):
                     elif '454' in platform_str or 'ROCHE' in platform_str:
                         return 'LS454'
                     else:
-                        # Return the original value if no mapping found
                         return platform_str
 
         print(f"Warning: Platform column not found in CNCB response", file=sys.stderr)
@@ -587,7 +568,6 @@ def batch_get_sequencing_platforms(pairs_file):
 
     Entrez.email = "your_email@example.com"
 
-    # Read input pairs
     ncbi_pairs = []   # [(dataset_id, srr_id), ...]
     cncb_pairs = []   # [(dataset_id, srr_id, bioproject_id), ...]
 
@@ -609,7 +589,6 @@ def batch_get_sequencing_platforms(pairs_file):
         srr_list = list(srr_to_ds.keys())
 
         try:
-            # epost: submit all SRR IDs at once
             search_term = " OR ".join(srr_list)
             search_handle = Entrez.esearch(db="sra", term=search_term, retmax=len(srr_list))
             search_results = Entrez.read(search_handle)
@@ -617,7 +596,6 @@ def batch_get_sequencing_platforms(pairs_file):
 
             uid_list = search_results.get('IdList', [])
             if uid_list:
-                # efetch: retrieve all records in one call
                 fetch_handle = Entrez.efetch(db="sra", id=",".join(uid_list), retmode="xml")
                 xml_data = fetch_handle.read()
                 fetch_handle.close()
@@ -633,7 +611,6 @@ def batch_get_sequencing_platforms(pairs_file):
                             print(f"{srr_to_ds[acc]}\t{plat}")
                             del srr_to_ds[acc]
 
-            # Warn about unresolved accessions
             for srr, ds_id in srr_to_ds.items():
                 print(f"Warning: No platform found for {srr} ({ds_id})", file=sys.stderr)
 
@@ -679,7 +656,6 @@ def adaptive_tail_trim(input_dir, output_dir, max_sample_reads=10000):
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    # ── Collect FASTQ paths ──────────────────────────────────────────────
     fq_files = sorted(
         glob.glob(os.path.join(input_dir, '*.fastq*'))
     )
@@ -711,7 +687,6 @@ def adaptive_tail_trim(input_dir, output_dir, max_sample_reads=10000):
                     if seq[idx] == 'N' or seq[idx] == 'n':
                         n_counts[pos] += 1
 
-    # Compute N frequency at each position from 3' end
     with np.errstate(divide='ignore', invalid='ignore'):
         n_freq = np.where(total_counts > 0,
                           n_counts / total_counts, 0.0)
@@ -726,7 +701,6 @@ def adaptive_tail_trim(input_dir, output_dir, max_sample_reads=10000):
 
     threshold = max(background * 3, 0.01)
 
-    # Scan from position 0 (3' end) inward
     trim_length = 0
     for pos in range(SCAN_WINDOW):
         if n_freq[pos] > threshold:
@@ -800,7 +774,6 @@ def adaptive_tail_trim(input_dir, output_dir, max_sample_reads=10000):
     print(f"  P95 = {p95}  →  --p-max-ambiguous {max_ambiguous}",
           file=sys.stderr)
 
-    # Machine-readable output on stdout
     print(f"TRIM_LENGTH={trim_length}")
     print(f"MAX_AMBIGUOUS={max_ambiguous}")
 
@@ -1052,7 +1025,6 @@ def degraded_quality_preprocess(input_dir, output_dir, trim_front=15, truncate_l
     if not fq_files:
         raise FileNotFoundError(f"No FASTQ files found in {input_dir}")
 
-    # For PE: only process R1 files (forward reads only)
     if sequence_type == "paired":
         r1_files = [f for f in fq_files if '_1.fastq' in f or '_R1' in f]
         if not r1_files:
@@ -1097,7 +1069,6 @@ def degraded_quality_preprocess(input_dir, output_dir, trim_front=15, truncate_l
     else:
         print(f"  Using specified truncation length: {truncate_length}bp", file=sys.stderr)
 
-    # Process files in parallel
     is_paired = (sequence_type == "paired")
     worker_args = [
         (fq, output_dir, trim_front, truncate_length, max_n, min_length, is_paired)
@@ -1208,7 +1179,6 @@ def derep_fastq_for_vsearch(input_dir, output_fasta, threads=4):
         if result_sort.returncode != 0:
             raise RuntimeError(f"vsearch sortbysize failed:\n{result_sort.stderr}")
 
-        # Count unique sequences in output
         n_unique = 0
         with open(output_fasta, 'r') as f:
             for line in f:
@@ -1346,7 +1316,6 @@ def relabel_reads_for_mapping(manifest_path, output_fasta, threads=4):
     n_workers = min(n_samples, max(1, threads))
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Build worker args: each sample writes to a temp file
         worker_args = []
         tmp_paths = []
         for idx, row in manifest.iterrows():
@@ -1356,7 +1325,6 @@ def relabel_reads_for_mapping(manifest_path, output_fasta, threads=4):
             tmp_paths.append(tmp_path)
             worker_args.append((sample_id, filepath, tmp_path))
 
-        # Process samples in parallel
         total_reads = 0
         if n_workers > 1:
             print(f"  Relabeling {n_samples} samples with {n_workers} parallel workers",
@@ -1371,7 +1339,6 @@ def relabel_reads_for_mapping(manifest_path, output_fasta, threads=4):
                 total_reads += read_num
                 print(f"  {sample_id}: {read_num} reads", file=sys.stderr)
 
-        # Concatenate temp files in manifest order
         with open(output_fasta, 'wb') as fout:
             for tmp_path in tmp_paths:
                 with open(tmp_path, 'rb') as fin:
@@ -1421,7 +1388,6 @@ def import_vsearch_to_qiime2(zotu_fasta, otu_table_tsv, manifest_path,
         with open(zotu_fasta, 'r') as fin, open(clean_fasta, 'w') as fout:
             for line in fin:
                 if line.startswith('>'):
-                    # Remove ;size=N and anything after it
                     header = line.rstrip('\n')
                     seq_id = header[1:].split(';')[0]
                     fasta_ids.add(seq_id)
@@ -1680,7 +1646,6 @@ if __name__ == "__main__":
                         help="Sequence type: 'paired' or 'single' (default: single)")
     parser.add_argument("--threads", type=int, default=4,
                         help="Number of threads for parallel operations (default: 4)")
-    # Arguments for vsearch pipeline functions
     parser.add_argument("--repseq_qza", help="Path to rep-seqs .qza (for export_derep_for_vsearch)")
     parser.add_argument("--table_qza", help="Path to table .qza (for export_derep_for_vsearch)")
     parser.add_argument("--output_fasta", help="Output FASTA path")
@@ -1692,7 +1657,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     
-    # Execute functions
     if args.function == "mk_manifest_SE":
         mk_manifest_SE(args.FilePath)
 
