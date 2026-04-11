@@ -1,10 +1,15 @@
 #!/bin/bash
 # Pre-flight dependency check for Meta2Data.
 # Can be run directly, or sourced by an entry script which then calls
-# meta2data_check_dependencies.
+# meta2data_check_dependencies or meta2data_ensure_python_deps.
 #
 # Exits (or returns when sourced) non-zero if any required binary, QIIME2
 # plugin, or Python package is missing. Prints a report with install hints.
+#
+# meta2data_ensure_python_deps is a lighter-weight helper used by each
+# entry script at startup: it checks the Python packages Meta2Data needs,
+# and auto-installs any missing ones into the active python3 environment
+# via `python3 -m pip install`. Set META2DATA_SKIP_DEP_CHECK=1 to bypass.
 
 # Required non-QIIME2 binaries that install_binaries.sh provisions.
 _M2D_VENDOR_BINARIES=(
@@ -175,6 +180,69 @@ meta2data_check_dependencies() {
     echo ""
     echo "=============================================================="
     return 1
+}
+
+# -----------------------------------------------------------------------------
+# Lightweight Python-dep ensure helper (called by every Meta2Data entry script)
+# -----------------------------------------------------------------------------
+# Auto-installs any missing Python packages into whatever python3 is currently
+# on PATH. Uses `python3 -m pip install`, so the install lands in the exact
+# site-packages the import check runs against (system python / venv / conda
+# env — Meta2Data does not care which, it just follows the active interpreter).
+#
+# Design choices:
+#   - Unified dep list across all subcommands. MetaDL, AmpliconPIP and ggCOMBO
+#     all end up touching one of biopython / pandas / numpy / requests, so
+#     there is no point in per-subcommand grouping.
+#   - No interactive prompt. If the user ran a Meta2Data command, they've
+#     opted in to whatever it needs; blocking on stdin breaks CI and HPC jobs.
+#   - Graceful bypass via META2DATA_SKIP_DEP_CHECK=1 for users who manage their
+#     environment by hand and want Meta2Data to stay out of pip.
+
+_M2D_REQUIRED_PYDEPS=(
+    "Bio:biopython"
+    "pandas:pandas"
+    "numpy:numpy"
+    "requests:requests"
+)
+
+meta2data_ensure_python_deps() {
+    [[ "${META2DATA_SKIP_DEP_CHECK:-}" == "1" ]] && return 0
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: python3 not found in PATH." >&2
+        echo "       Meta2Data needs a Python 3 interpreter on PATH." >&2
+        echo "       Install python3 via your package manager or activate a" >&2
+        echo "       conda/venv environment that provides it, then retry." >&2
+        return 1
+    fi
+
+    local -a missing=()
+    local entry import_name pip_name
+    for entry in "${_M2D_REQUIRED_PYDEPS[@]}"; do
+        import_name="${entry%%:*}"
+        pip_name="${entry##*:}"
+        python3 -c "import ${import_name}" >/dev/null 2>&1 \
+            || missing+=("$pip_name")
+    done
+
+    [[ ${#missing[@]} -eq 0 ]] && return 0
+
+    local py_prefix
+    py_prefix=$(python3 -c 'import sys; print(sys.prefix)' 2>/dev/null || echo "unknown")
+    echo "[deps] Missing Python packages: ${missing[*]}"
+    echo "[deps] Installing into active python3 env: ${py_prefix}"
+    if ! python3 -m pip install "${missing[@]}"; then
+        echo "" >&2
+        echo "Error: failed to auto-install Python packages: ${missing[*]}" >&2
+        echo "       This can happen on read-only environments or when pip is" >&2
+        echo "       unavailable. Install them manually with:" >&2
+        echo "         python3 -m pip install ${missing[*]}" >&2
+        echo "       Or set META2DATA_SKIP_DEP_CHECK=1 to bypass this check." >&2
+        return 1
+    fi
+    echo "[deps] OK"
+    return 0
 }
 
 # When executed directly, run the check and exit with its status.

@@ -18,48 +18,86 @@ If you are running the AmpliconPIP or ggCOMBO functions on a server, please ensu
 
 ## Installation
 
-Meta2Data layers itself on top of a user-provided QIIME2 2024.10 amplicon
-environment. It does NOT ship its own conda environment file — you install
-QIIME2 once, then Meta2Data plus two native binaries on top.
+Meta2Data is a self-contained command-line tool. It lives **entirely inside
+the cloned repository folder** — there is no `pip install` step and no
+conda environment to create for Meta2Data itself. You expose it to your
+shell by adding `<repo>/bin` to your `PATH`. QIIME2 is only required if
+you plan to run `AmpliconPIP` or `ggCOMBO`; `MetaDL` runs on any Python 3
+interpreter.
 
-### Step 1: Install QIIME2
+### Step 1: Clone the repo and add it to PATH
 
-Follow QIIME2's official instructions to install the **2024.10 amplicon
-distribution**, then activate the resulting environment:
+```bash
+git clone https://github.com/LinyangSun/Meta2Data.git
+echo 'export PATH="'"$PWD"'/Meta2Data/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+> **Order matters if you also use conda.** Put the `export PATH` line
+> *before* any `conda activate` in your shell session or rc file. Conda
+> prepends its env's `bin` to `PATH` on activation, so putting Meta2Data
+> first in rc means conda later shadows it with its own `python`/`pip` —
+> which is exactly what you want, and Meta2Data's own commands remain
+> resolvable via the persistent `$HOME/Meta2Data/bin` entry.
+
+### Step 2: Download vsearch and fastp (only for AmpliconPIP / ggCOMBO)
+
+`scripts/install_binaries.sh` downloads prebuilt Linux static binaries for
+`vsearch 2.30.0` and `fastp 0.24.0` directly from their upstream release
+pages (no compilation, no extra conda packages) and drops them into
+`<repo>/vendor/bin/`, which Meta2Data entry scripts auto-prepend to `PATH`
+at runtime:
+
+```bash
+cd Meta2Data
+bash scripts/install_binaries.sh
+```
+
+The script is idempotent — re-run it anytime without side effects. If you
+only intend to use `MetaDL`, you can skip this step entirely. Use
+`bash scripts/install_binaries.sh --help` for `--prefix` and `--force`.
+
+### Step 3: Install QIIME2 (only for AmpliconPIP / ggCOMBO)
+
+`AmpliconPIP` and `ggCOMBO` invoke `qiime` plugins at runtime. Follow
+QIIME2's official instructions to install the **2024.10 amplicon
+distribution** and activate it before running those subcommands:
 
 ```bash
 conda activate qiime2-amplicon-2024.10
 ```
 
 See https://docs.qiime2.org/2024.10/install/ for the current recommended
-procedure.
+procedure. **`MetaDL` does not need this step** — it can run against any
+`python3` on your `PATH` (system, venv, or a minimal conda env with just
+`python3` installed).
 
-### Step 2: Install Meta2Data and native binaries
+### Python packages — handled automatically
 
-Clone the repo, install in editable mode, then download the two native
-binaries QIIME2 does not ship. The only Python dependency Meta2Data pulls
-on top of QIIME2 is `biopython` (safe pure-Python install).
-`scripts/install_binaries.sh` downloads prebuilt Linux static binaries for
-`vsearch 2.30.0` and `fastp 0.24.0` directly from their upstream release
-pages (no compilation, no extra conda packages) and drops them into
-`<repo>/vendor/bin/`:
+Meta2Data uses `biopython`, `pandas`, `numpy`, and `requests`. On the
+first run of any subcommand, the entry script detects missing Python
+packages against the currently active `python3` and auto-installs them
+with `python3 -m pip install`. You do **not** need to install them
+manually.
 
-```bash
-git clone https://github.com/LinyangSun/Meta2Data.git
-cd Meta2Data
-pip install -e . && bash scripts/install_binaries.sh
-```
+The install lands in whichever `python3` is first on your `PATH`:
 
-The binary installer is idempotent — re-run it anytime without side effects.
-Meta2Data entry scripts automatically prepend `<repo>/vendor/bin` to `PATH`
-at startup, so you never have to edit your shell config. Use
-`bash scripts/install_binaries.sh --help` for `--prefix` and `--force`.
+- If you activated the QIIME2 env, packages land in the QIIME2 env.
+- If you did not activate anything, they land in the system / user
+  Python — same as any plain `pip install` would.
+- If you made a dedicated venv for `MetaDL`, they land there.
 
-### Step 3: Verify installation
+To opt out (e.g., on a read-only HPC login node where pip will fail
+anyway), set `META2DATA_SKIP_DEP_CHECK=1` and manage the packages
+yourself.
 
-Run the built-in dependency check (part of `--test` mode — see [Case 4](#case-4-test-mode--quick-validation)):
+### Step 4: Verify installation
 
 ```bash
+# MetaDL-only users
+Meta2Data MetaDL --help
+
+# Full pipeline users (QIIME2 env active)
 Meta2Data --help
 bash scripts/check_dependencies.sh
 ```
@@ -479,9 +517,7 @@ Meta2Data/
 │   └── check_dependencies.sh   # Pre-flight dependency check
 ├── vendor/                     # (gitignored) vsearch/fastp from install_binaries.sh
 ├── test/                       # Test data
-├── docs/                       # Documentation & reference sequences
-├── pyproject.toml              # Python package config
-└── setup.py                    # Script installation config
+└── docs/                       # Documentation & reference sequences
 ```
 
 ### Contributing

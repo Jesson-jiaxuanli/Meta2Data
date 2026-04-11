@@ -66,39 +66,59 @@ Workflow: SRA download → Quality control → Platform-specific processing → 
 
 **Platform:** Linux only (x86_64 or aarch64).
 
-Meta2Data layers itself on top of a user-provided QIIME2 2024.10 amplicon
-environment. It does NOT ship its own env.yml or manage the QIIME2 install.
+Meta2Data is a self-contained tool that lives entirely inside the cloned
+repository. There is **no `pip install` step** — Meta2Data is never copied
+into any conda env. Users expose it to their shell by adding `<repo>/bin`
+to `PATH`.
 
-**Three-step install:**
+QIIME2 is a **runtime dependency of `AmpliconPIP` / `ggCOMBO` only**, not
+of Meta2Data itself. `MetaDL` runs on any Python 3 interpreter.
+
+**Install flow:**
 
 ```bash
-# 1. Install QIIME2 2024.10 amplicon following QIIME2's official instructions,
-#    then activate it.
-conda activate qiime2-amplicon-2024.10
+# 1. Clone and put <repo>/bin on PATH.
+git clone https://github.com/LinyangSun/Meta2Data.git
+echo 'export PATH="'"$PWD"'/Meta2Data/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 
-# 2. Install Meta2Data (pulls in biopython via pip — safe on top of QIIME2).
-pip install -e .
-
-# 3. Download the two native binaries QIIME2 does not ship (vsearch, fastp).
+# 2. (AmpliconPIP / ggCOMBO only) Download vsearch + fastp into vendor/bin.
+cd Meta2Data
 bash scripts/install_binaries.sh
+
+# 3. (AmpliconPIP / ggCOMBO only) Install and activate QIIME2 2024.10
+#    amplicon following QIIME2's official instructions.
+conda activate qiime2-amplicon-2024.10
 ```
 
 `install_binaries.sh` pulls prebuilt Linux static binaries from upstream
 releases (no compilation, no conda), drops them into `<repo>/vendor/bin/`,
-and is idempotent — re-run it anytime without side effects. The Meta2Data
-entry scripts auto-prepend `<repo>/vendor/bin` to `PATH` at startup, so you
-never have to touch your shell config. See `bash scripts/install_binaries.sh
---help` for `--prefix` and `--force` overrides.
+and is idempotent. Meta2Data entry scripts auto-prepend `<repo>/vendor/bin`
+to `PATH` at startup, so users never touch their shell config for those
+two binaries. See `bash scripts/install_binaries.sh --help` for `--prefix`
+and `--force` overrides.
+
+**Python packages are auto-installed at runtime.** Every Meta2Data entry
+script (`Meta2Data-MetaDL`, `Meta2Data-AmpliconPIP`, `Meta2Data-ggCOMBO`)
+sources `scripts/check_dependencies.sh` and calls
+`meta2data_ensure_python_deps` before doing any work. That helper probes
+the active `python3` for `biopython`, `pandas`, `numpy`, and `requests`,
+and runs `python3 -m pip install` for anything missing — so packages
+always land in whichever Python env the user currently has on PATH. Set
+`META2DATA_SKIP_DEP_CHECK=1` to bypass this behavior.
 
 **Software used at runtime:**
-- QIIME2 2024.10 amplicon distribution (provides `qiime` plugins, pandas,
-  numpy, requests, biom-format, cutadapt, and its own vsearch for plugin use)
+- QIIME2 2024.10 amplicon distribution — **only needed for `AmpliconPIP` /
+  `ggCOMBO`**; provides `qiime` plugins, pandas, numpy, requests,
+  biom-format, cutadapt, and its own vsearch for plugin use
 - `vsearch` 2.30.0 — installed by `install_binaries.sh`; used directly by the
   DegradedQ pipeline (UNOISE3, uchime3, usearch_global)
 - `fastp` 0.24.0 — installed by `install_binaries.sh`; adapter removal and
   quality filtering for all Illumina / 454 / Ion Torrent / PacBio inputs
-- `biopython` — installed as a pip dependency of Meta2Data; used for NCBI
-  Entrez queries
+- `biopython`, `pandas`, `numpy`, `requests` — auto-installed into the
+  active `python3` on first run. `biopython` is used by both
+  `metadata_downloader.py` (NCBI Entrez for `MetaDL`) and `py_16s.py`
+  (`SeqIO` parsing + NCBI platform detection inside `AmpliconPIP`)
 - `wget`, `unzip`, `tar`, `gzip`, `md5sum` — expected to be present on any
   standard Linux distribution
 
