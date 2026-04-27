@@ -10,20 +10,18 @@ Bioinformatic processes executed by Meta2Data (Table 1) are active by default in
 
 | Process (in operation order) | Module | Tool(s) |
 |---|---|---|
-| Keyword / BioProject ID search | MetaDL | NCBI Entrez, CNCB API |
-| Metadata download and standardization | MetaDL | Biopython, requests |
+| Metadata retrieval and standardisation | MetaDL | NCBI Entrez, CNCB API, Biopython, requests |
 | Sequencing platform detection | AmpliconPIP | NCBI Entrez, CNCB API |
 | Raw data download | AmpliconPIP | Aspera / SRA FTP / CNCB |
 | Adapter removal | AmpliconPIP | fastp 0.24.0 |
 | Primer detection and trimming | AmpliconPIP | entropy_primer_detect.py |
-| Illumina / Ion Torrent denoising | AmpliconPIP | DADA2 (QIIME2) |
-| Roche 454 OTU clustering | AmpliconPIP | vsearch 2.30.0 (QIIME2) |
+| Illumina / Ion Torrent denoising | AmpliconPIP | DADA2 denoise-paired / denoise-pyro (QIIME2) |
+| Roche 454 OTU clustering | AmpliconPIP | vsearch 2.30.0 |
 | PacBio SMRT CCS denoising | AmpliconPIP | DADA2 denoise-ccs (QIIME2) |
 | Feature table and sequence merging | ggCOMBO | QIIME2 feature-table |
-| Sequence orientation | ggCOMBO | RESCRIPt (QIIME2) |
+| Sequence orientation correction | ggCOMBO | RESCRIPt (QIIME2) |
 | Taxonomy assignment | ggCOMBO | Naïve Bayes classifier (QIIME2) |
-| Phylogenetic tree construction | ggCOMBO | SEPP fragment insertion (QIIME2) |
-| Tree-based feature filtering | ggCOMBO | QIIME2 fragment-insertion |
+| Phylogenetic placement and feature filtering | ggCOMBO | SEPP fragment insertion (QIIME2) |
 
 The primary Meta2Data pipeline accepts either a directory of plain-text BioProject ID files—supporting PRJNA, PRJEB, PRJDB, and PRJCA prefixes covering NCBI, ENA, DDBJ, and CNCB—or a structured keyword query combining field, organism, and optional terms. MetaDL downloads SRA RunInfo and BioSample attribute tables via NCBI Entrez efetch or the CNCB GSA portal, merges records on shared BioSample identifiers, and normalises all column names to CamelCase via a configurable rename dictionary, producing a consolidated all_metadata_merged.csv that requires no manual reformatting before being consumed by AmpliconPIP. Before dispatching datasets to sub-pipelines, AmpliconPIP performs a batch platform detection query against NCBI Entrez and CNCB metadata for all pending projects in a single pre-processing step, preventing API rate-limit exhaustion during parallel execution. Adapter sequences are subsequently removed with fastp 0.24.0 with quality and length filtering disabled, ensuring that only technical adapter contamination is stripped prior to primer detection. Primer sequences are identified and trimmed by entropy_primer_detect.py, which constructs a 60 × 4 position-wise base frequency matrix from the first sample, labels each position as Conserved (f₁ ≥ 0.80), Degenerate (f₁+f₂ ≥ 0.80, f₂ ≥ 0.10), or Variable, and matches the longest [CD]* prefix against nine forward and thirteen reverse consensus sequences spanning V1–V9. Trimmed reads are routed to platform-specific denoising: Illumina data use DADA2 denoise-paired with automatic PE-to-SE fallback if read-pair retention falls below 50%; Ion Torrent data use DADA2 denoise-pyro with a 10 bp 5′ trim; PacBio SMRT CCS data use DADA2 denoise-ccs with 27F/1492R primers; and Roche 454 data use a vsearch-based pipeline of adaptive tail trimming, 97% de novo OTU clustering, and chimera removal. For QIIME2-based taxonomy assignment, users can specify any of three supported reference databases via --db-type—GreenGenes2 2024.09, SILVA 138.99, or GSR-DB—or allow the pipeline to automatically download and validate the selected database with --dl on first invocation.
 
