@@ -29,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote
 from itertools import product
 import hashlib
+from difflib import SequenceMatcher
 
 # ============================================================================
 # Configuration
@@ -42,8 +43,8 @@ BATCH_SIZE = 500
 
 UNIFIED_PATTERNS = {
     'Run': re.compile(r'^[CEDS]RR\d+$'),
-    'BioProject': re.compile(r'^PRJ[CEDN][A-Z]\d+$'),
-    'BioSample': re.compile(r'^SAM[CEDN][A-Z]?\d+$'),
+    'Bioproject': re.compile(r'^PRJ[CEDN][A-Z]\d+$'),
+    'Biosample': re.compile(r'^SAM[CEDN][A-Z]?\d+$'),
     'Experiment': re.compile(r'^[CEDS]RX\d+$'),
 }
 
@@ -53,7 +54,15 @@ ID_PATTERNS = {
     'ncbi': re.compile(r'^PRJ[EDN][A-Z]\d+$'),
 }
 
-PRIORITY_COLUMNS = ['Run', 'BioProject', 'BioSample', 'Experiment']
+PRIORITY_COLUMNS = ['Run', 'Bioproject', 'Description', 'DesignDescription', 'Biosample', 'Experiment']
+
+CORE_COLUMNS = [
+    'Run', 'Bioproject', 'Description', 'DesignDescription', 'Biosample', 'Experiment', 'Center', 'ReleaseDate',
+    'FileType', 'FileName', 'SizeMb', 'Title',
+    'LibraryStrategy', 'LibrarySelection', 'LibrarySource', 'LibraryLayout',
+    'InsertSize', 'Platform', 'Platform.1', 'SampleType', 'HostTaxonomyId',
+    'ScientificName', 'Submission',
+]
 
 STATUS_HAS_DATA = 'has_data'
 STATUS_NO_DATA = 'no_data'
@@ -105,6 +114,126 @@ def retry_wrapper(func, max_retries=DEFAULT_RETRY_ATTEMPTS, retry_delay=DEFAULT_
             if attempt < max_retries - 1:
                 time.sleep(retry_delay * (2 ** attempt))
     raise last_error
+
+
+# ============================================================================
+# BioProject Description Fetching
+# ============================================================================
+
+def fetch_ncbi_description(bioproject_id):
+    """Fetch title+description from NCBI for PRJNA/PRJEB/PRJDB using Entrez."""
+    from xml.etree import ElementTree as ET
+
+    def _fetch():
+        search_handle = Entrez.esearch(db="bioproject", term=bioproject_id, retmax=1)
+        search_results = Entrez.read(search_handle)
+        search_handle.close()
+
+        id_list = search_results.get("IdList", [])
+        if not id_list:
+            return None
+
+        time.sleep(DEFAULT_REQUEST_DELAY)
+
+        fetch_handle = Entrez.efetch(db="bioproject", id=id_list[0], retmode="xml")
+        xml_data = fetch_handle.read()
+        fetch_handle.close()
+        if isinstance(xml_data, bytes):
+            xml_data = xml_data.decode('utf-8')
+
+        root = ET.fromstring(xml_data)
+
+        for xp in [".//ProjectDescr/Description", ".//Project/ProjectDescr/Description"]:
+            el = root.find(xp)
+            if el is not None and el.text:
+                return el.text.strip()
+
+        for xp in [".//ProjectDescr/Title", ".//Project/ProjectDescr/Title"]:
+            el = root.find(xp)
+            if el is not None and el.text:
+                return el.text.strip()
+
+        return None
+
+    try:
+        return retry_wrapper(_fetch)
+    except Exception as e:
+        print(f"  [NCBI description ERROR] {bioproject_id}: {e}")
+        return None
+
+
+def fetch_cncb_description(bioproject_id):
+    """Fetch description from CNCB for PRJCA."""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; Meta2Data/1.0)"}
+
+    # Method 1: GWH API
+    try:
+        resp = requests.get(
+            f"https://ngdc.cncb.ac.cn/gwh/api/public/bioProject/{bioproject_id}",
+            headers=headers, timeout=30,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("message") == "SUCCESS":
+                desc = (data.get("description") or "").strip()
+                if desc:
+                    return desc
+                title = (data.get("title") or "").strip()
+                if title:
+                    return title
+    except Exception:
+        pass
+
+    # Method 2: Browse page scraping
+    try:
+        resp = requests.get(
+            f"https://ngdc.cncb.ac.cn/bioproject/browse/{bioproject_id}",
+            headers={**headers, "Accept-Language": "en-US,en;q=0.9"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        html = resp.text
+
+        for pat in [
+            r'描述信息\s*</t[dh]>\s*<td[^>]*>(.*?)</td>',
+            r'Description\s*</t[dh]>\s*<td[^>]*>(.*?)</td>',
+        ]:
+            m = re.search(pat, html, re.DOTALL | re.IGNORECASE)
+            if m:
+                txt = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+                txt = re.sub(r"\s+", " ", txt)
+                if len(txt) > 5:
+                    return txt
+
+        for pat in [
+            r'项目标题\s*</t[dh]>\s*<td[^>]*>(.*?)</td>',
+            r'Title\s*</t[dh]>\s*<td[^>]*>(.*?)</td>',
+        ]:
+            m = re.search(pat, html, re.DOTALL | re.IGNORECASE)
+            if m:
+                txt = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+                txt = re.sub(r"\s+", " ", txt)
+                if len(txt) > 2:
+                    return txt
+    except Exception as e:
+        print(f"  [CNCB description ERROR] {bioproject_id}: {e}")
+
+    return None
+
+
+def fetch_bioproject_description(bioproject_id):
+    """Fetch description for a BioProject, routing to NCBI or CNCB."""
+    bp = bioproject_id.strip().upper()
+    if bp.startswith("PRJCA"):
+        desc = fetch_cncb_description(bioproject_id)
+    else:
+        desc = fetch_ncbi_description(bioproject_id)
+        time.sleep(DEFAULT_REQUEST_DELAY)
+    if desc:
+        print(f"  Description: {desc[:80]}{'...' if len(desc) > 80 else ''}")
+    else:
+        print(f"  Description: [not found]")
+    return desc
 
 
 def classify_ids(id_list):
@@ -292,11 +421,35 @@ def apply_camelcase_normalization(df):
     return df
 
 
+DESIGN_DESCRIPTION_ALIASES = [
+    'LibraryConstruction/ExperimentalDesign',
+    'LibraryConstructionExperimentalDesign',
+    'Experiment_LibraryConstruction/ExperimentalDesign',
+    'ExperimentalDesign',
+    'Experimental_Design',
+    'Design_Description',
+]
+
+
 def standardize_columns(df):
     """Apply all three column standardization steps."""
     df = clean_and_standardize_columns(df)
     df = apply_column_rename_from_dict(df)
     df = apply_camelcase_normalization(df)
+
+    # Rename CNCB design column to DesignDescription
+    if 'DesignDescription' not in df.columns:
+        for alias in DESIGN_DESCRIPTION_ALIASES:
+            if alias in df.columns:
+                df = df.rename(columns={alias: 'DesignDescription'})
+                print(f"  Renamed '{alias}' → 'DesignDescription'")
+                break
+
+    # Re-apply priority column ordering after all renames
+    first_cols = [c for c in PRIORITY_COLUMNS if c in df.columns]
+    other_cols = [c for c in df.columns if c not in PRIORITY_COLUMNS]
+    df = df[first_cols + other_cols]
+
     return df
 
 
@@ -476,8 +629,10 @@ class BioProjectDownloader:
             time.sleep(0.5)
             return output_file
         except Exception as e:
-            print(f"  NCBI error: {e}")
-            return None
+            print(f"\n  ERROR: NCBI server issue — {e}")
+            print(f"  The NCBI E-utilities backend is currently unavailable.")
+            print(f"  Please try again later.")
+            sys.exit(1)
 
     def _download_from_cncb(self, query, output_dir, file_format="tsv"):
         try:
@@ -655,14 +810,49 @@ def download_cncb_metadata(accession, output_dir):
                 temp_xlsx.write_bytes(resp.content)
                 xlsx = pd.ExcelFile(temp_xlsx)
 
-                sheet_dfs = []
+                sheets = {}
                 for sheet in xlsx.sheet_names:
                     sdf = pd.read_excel(xlsx, sheet_name=sheet)
-                    sdf.columns = [f"{sheet}_{col}" for col in sdf.columns]
-                    sheet_dfs.append(sdf)
+                    sheets[sheet] = sdf
 
-                if sheet_dfs:
-                    cra_merged = pd.concat(sheet_dfs, axis=1)
+                # Merge sheets via foreign keys: Run -> Experiment -> Sample
+                cra_merged = None
+                if 'Run' in sheets and 'Experiment' in sheets:
+                    run_df = sheets['Run']
+                    exp_df = sheets['Experiment']
+                    # Run.Experiment accession -> Experiment.Accession
+                    if 'Experiment accession' in run_df.columns and 'Accession' in exp_df.columns:
+                        exp_df = exp_df.rename(columns={'Accession': 'Experiment_Accession'})
+                        exp_df.columns = [f"Experiment_{c}" if c != 'Experiment_Accession' else c
+                                          for c in exp_df.columns]
+                        cra_merged = run_df.merge(exp_df, left_on='Experiment accession',
+                                                  right_on='Experiment_Accession', how='left')
+                    else:
+                        cra_merged = run_df
+
+                    if 'Sample' in sheets:
+                        sam_df = sheets['Sample']
+                        if 'Accession' in sam_df.columns:
+                            sam_df = sam_df.rename(columns={'Accession': 'Sample_Accession'})
+                            sam_df.columns = [f"Sample_{c}" if c != 'Sample_Accession' else c
+                                              for c in sam_df.columns]
+                            # Find BioSample accession column in merged data
+                            bs_col = None
+                            for candidate in ['Experiment_BioSample accession', 'BioSample accession']:
+                                if candidate in cra_merged.columns:
+                                    bs_col = candidate
+                                    break
+                            if bs_col:
+                                cra_merged = cra_merged.merge(sam_df, left_on=bs_col,
+                                                              right_on='Sample_Accession', how='left')
+                elif sheets:
+                    # Unexpected sheet structure — use the largest sheet only
+                    # (axis=1 concat by position would cause row misalignment)
+                    largest_name = max(sheets, key=lambda k: len(sheets[k]))
+                    cra_merged = sheets[largest_name]
+                    print(f"    {cra}: unexpected sheet structure, using '{largest_name}' sheet only")
+
+                if cra_merged is not None:
                     all_excel_dfs.append(cra_merged)
                     print(f"    {cra}: {len(cra_merged)} rows, {len(cra_merged.columns)} columns")
 
@@ -670,15 +860,23 @@ def download_cncb_metadata(accession, output_dir):
             except Exception as e:
                 print(f"    {cra} failed: {e}")
 
-    # Merge CSV + Excel
+    # Merge CSV + Excel via Run accession
     if all_excel_dfs:
         excel_combined = pd.concat(all_excel_dfs, axis=0, ignore_index=True) \
             if len(all_excel_dfs) > 1 else all_excel_dfs[0]
 
-        if len(csv_df) == len(excel_combined):
-            final_df = pd.concat([csv_df, excel_combined], axis=1)
+        # Find the Run accession column in Excel data
+        excel_run_col = None
+        for candidate in ['Accession', 'Run_Accession']:
+            if candidate in excel_combined.columns:
+                excel_run_col = candidate
+                break
+
+        if excel_run_col and 'Run' in csv_df.columns:
+            final_df = csv_df.merge(excel_combined, left_on='Run',
+                                    right_on=excel_run_col, how='left')
         else:
-            print(f"  Row count mismatch (CSV: {len(csv_df)}, Excel: {len(excel_combined)}), using CSV only")
+            print(f"  Warning: No shared Run key between CSV and Excel data, using CSV only")
             final_df = csv_df
     else:
         final_df = csv_df
@@ -744,10 +942,57 @@ def download_biosample_data(group_id, biosample_ids, output_dir):
         return None
 
 
-def _fetch_sra_runinfo(sra_ids, group_id, output_dir):
-    """Fetch SRA RunInfo CSV from a list of SRA UIDs. Shared by both flows."""
+def _fetch_sra_design(sra_ids):
+    """Fetch DesignDescription from SRA full XML using the same UIDs."""
     if not sra_ids:
-        return None
+        return {}
+
+    from xml.etree import ElementTree as ET
+    design_map = {}  # Experiment accession -> DesignDescription
+
+    def _fetch():
+        for i in range(0, len(sra_ids), BATCH_SIZE):
+            batch = sra_ids[i:i + BATCH_SIZE]
+            handle = Entrez.efetch(db="sra", id=",".join(batch),
+                                   rettype="full", retmode="xml")
+            data = handle.read()
+            handle.close()
+            if isinstance(data, bytes):
+                data = data.decode('utf-8')
+
+            try:
+                root = ET.fromstring(f"<root>{data}</root>")
+                for pkg in root.findall('.//EXPERIMENT_PACKAGE'):
+                    exp = pkg.find('.//EXPERIMENT')
+                    if exp is None:
+                        continue
+                    exp_acc = exp.get('accession', '')
+                    desc_el = exp.find('.//DESIGN/DESIGN_DESCRIPTION')
+                    if exp_acc and desc_el is not None and desc_el.text:
+                        design_map[exp_acc] = desc_el.text.strip()
+            except ET.ParseError:
+                pass
+
+            if len(sra_ids) > BATCH_SIZE:
+                time.sleep(DEFAULT_REQUEST_DELAY)
+        return design_map
+
+    try:
+        return retry_wrapper(_fetch)
+    except Exception:
+        return {}
+
+
+def _fetch_sra_runinfo(sra_ids, group_id, output_dir):
+    """Fetch SRA RunInfo CSV + DesignDescription from a list of SRA UIDs."""
+    if not sra_ids:
+        return None, {}
+
+    design_map = _fetch_sra_design(sra_ids)
+    if design_map:
+        print(f"  SRA DesignDescription: fetched for {len(design_map)} experiments")
+
+    time.sleep(DEFAULT_REQUEST_DELAY)
 
     def _fetch():
         all_data = []
@@ -773,9 +1018,9 @@ def _fetch_sra_runinfo(sra_ids, group_id, output_dir):
         return output_file
 
     try:
-        return retry_wrapper(_fetch)
+        return retry_wrapper(_fetch), design_map
     except Exception:
-        return None
+        return None, design_map
 
 
 def download_sra_runinfo(bioproject_id, output_dir):
@@ -790,7 +1035,7 @@ def download_sra_runinfo(bioproject_id, output_dir):
     try:
         sra_ids = retry_wrapper(_search)
     except Exception:
-        return None
+        return None, {}
 
     return _fetch_sra_runinfo(sra_ids, bioproject_id, output_dir)
 
@@ -970,7 +1215,7 @@ def parse_biosample_file(file_path):
 
         match = re.search(r'Accession:\s+(\S+)', block)
         if match:
-            data['BioSample'] = match.group(1)
+            data['Biosample'] = match.group(1)
 
         for key, pattern in [('Sample_Name', r'Identifiers:.*?Label:\s+(\S+)'),
                              ('Organism', r'Organism:\s+(.+?)(?:\n|$)')]:
@@ -994,7 +1239,7 @@ def parse_biosample_file(file_path):
 # ============================================================================
 
 def merge_ncbi_data_single(biosample_df, sra_df):
-    """Merge BioSample and SRA data."""
+    """Merge BioSample attributes onto SRA RunInfo. SRA (Run-level) is the primary table."""
     if biosample_df.empty and sra_df.empty:
         return pd.DataFrame()
     if biosample_df.empty:
@@ -1002,20 +1247,32 @@ def merge_ncbi_data_single(biosample_df, sra_df):
     if sra_df.empty:
         return biosample_df
 
-    if 'BioSample' in sra_df.columns and 'BioSample' in biosample_df.columns:
-        return sra_df.merge(biosample_df, on='BioSample', how='outer',
+    # SRA is always the left table (Run-level granularity).
+    # BioSample attributes are joined via Biosample key.
+    if 'Biosample' in sra_df.columns and 'Biosample' in biosample_df.columns:
+        return sra_df.merge(biosample_df, on='Biosample', how='left',
                             suffixes=('', '_biosample'))
 
-    return pd.concat([sra_df, biosample_df], axis=1)
+    # Fallback: try Run as key
+    if 'Run' in sra_df.columns and 'Run' in biosample_df.columns:
+        print(f"  Warning: No shared 'Biosample' column, merging on 'Run' instead")
+        return sra_df.merge(biosample_df, on='Run', how='left',
+                            suffixes=('', '_biosample'))
+
+    # No shared key — cannot safely merge by position.
+    print(f"  Warning: No shared key between SRA ({list(sra_df.columns)[:5]}) "
+          f"and BioSample ({list(biosample_df.columns)[:5]}). Using SRA data only.")
+    return sra_df
 
 
 def _download_and_merge_ncbi(group_id, biosample_ids, output_dir, sra_fetch_fn):
     """Shared logic: download BioSample + SRA, merge, standardize.
 
-    sra_fetch_fn: callable that returns SRA RunInfo file path.
+    sra_fetch_fn: callable that returns (sra_file_path, design_map) tuple.
     """
     biosample_df = pd.DataFrame()
     sra_df = pd.DataFrame()
+    design_map = {}
 
     try:
         biosample_file = download_biosample_data(group_id, biosample_ids,
@@ -1028,16 +1285,25 @@ def _download_and_merge_ncbi(group_id, biosample_ids, output_dir, sra_fetch_fn):
     time.sleep(DEFAULT_REQUEST_DELAY)
 
     try:
-        sra_file = sra_fetch_fn()
+        sra_file, design_map = sra_fetch_fn()
         if sra_file:
             sra_df = pd.read_csv(sra_file)
+            sra_df.rename(columns={'BioSample': 'Biosample', 'BioProject': 'Bioproject'}, inplace=True)
     except Exception:
         pass
 
     if biosample_df.empty and sra_df.empty:
         return None
 
-    return standardize_columns(merge_ncbi_data_single(biosample_df, sra_df))
+    merged = merge_ncbi_data_single(biosample_df, sra_df)
+
+    # Add DesignDescription from SRA XML
+    if design_map and 'Experiment' in merged.columns:
+        merged['DesignDescription'] = merged['Experiment'].map(design_map).fillna('')
+    elif design_map:
+        merged['DesignDescription'] = ''
+
+    return standardize_columns(merged)
 
 
 def download_ncbi_metadata(bioproject_id, output_dir):
@@ -1093,32 +1359,34 @@ def download_ncbi_metadata_from_biosamples(biosample_accessions, output_dir):
     if not biosample_df.empty and '_biosample_uid' in biosample_df.columns:
         for _, row in biosample_df.iterrows():
             uid = str(row.get('_biosample_uid', ''))
-            ncbi_acc = str(row.get('BioSample', ''))
+            ncbi_acc = str(row.get('Biosample', ''))
             if uid in uid_to_original and ncbi_acc:
                 orig_acc = uid_to_original[uid]
                 if ncbi_acc != orig_acc:
                     ncbi_to_original[ncbi_acc] = orig_acc
 
         # Restore original accessions in biosample_df
-        biosample_df['BioSample'] = biosample_df['_biosample_uid'].astype(str).map(
+        biosample_df['Biosample'] = biosample_df['_biosample_uid'].astype(str).map(
             uid_to_original
-        ).fillna(biosample_df['BioSample'])
+        ).fillna(biosample_df['Biosample'])
         biosample_df.drop(columns=['_biosample_uid'], inplace=True)
 
-    # 4. Download SRA RunInfo (reuse verified UIDs)
+    # 4. Download SRA RunInfo + DesignDescription (reuse verified UIDs)
     sra_df = pd.DataFrame()
+    design_map = {}
     time.sleep(DEFAULT_REQUEST_DELAY)
     try:
         sra_uids = _get_sra_uids_from_biosample_uids(all_uids)
-        sra_file = _fetch_sra_runinfo(sra_uids, GROUP_ID, output_dir)
+        sra_file, design_map = _fetch_sra_runinfo(sra_uids, GROUP_ID, output_dir)
         if sra_file:
             sra_df = pd.read_csv(sra_file)
+            sra_df.rename(columns={'BioSample': 'Biosample', 'BioProject': 'Bioproject'}, inplace=True)
     except Exception:
         pass
 
     # 5. Restore original accessions in SRA data
-    if not sra_df.empty and 'BioSample' in sra_df.columns and ncbi_to_original:
-        sra_df['BioSample'] = sra_df['BioSample'].map(
+    if not sra_df.empty and 'Biosample' in sra_df.columns and ncbi_to_original:
+        sra_df['Biosample'] = sra_df['Biosample'].map(
             lambda val: ncbi_to_original.get(str(val), val)
         )
 
@@ -1126,14 +1394,21 @@ def download_ncbi_metadata_from_biosamples(biosample_accessions, output_dir):
     if biosample_df.empty and sra_df.empty:
         return None
 
-    return standardize_columns(merge_ncbi_data_single(biosample_df, sra_df))
+    merged = merge_ncbi_data_single(biosample_df, sra_df)
+
+    # Add DesignDescription from SRA XML
+    if design_map and 'Experiment' in merged.columns:
+        merged['DesignDescription'] = merged['Experiment'].map(design_map).fillna('')
+
+    return standardize_columns(merged)
 
 
 # ============================================================================
 # Single Project Processing
 # ============================================================================
 
-def process_single_bioproject(bioproject_id, output_dir, state_manager):
+def process_single_bioproject(bioproject_id, output_dir, state_manager,
+                              description_cache=None):
     """Process a single BioProject (NCBI or CNCB)."""
     print(f"\n{'─'*50}")
     print(f"Processing: {bioproject_id}")
@@ -1171,8 +1446,19 @@ def process_single_bioproject(bioproject_id, output_dir, state_manager):
 
     # Preserve the user's original BioProject ID (NCBI may cross-reference
     # e.g., PRJEB -> PRJNA, PRJDB -> PRJNA)
-    if 'BioProject' in df.columns:
-        df['BioProject'] = bioproject_id
+    if 'Bioproject' in df.columns:
+        df['Bioproject'] = bioproject_id
+
+    # Use pre-fetched description from cache (avoid fetching during parallel processing
+    # to prevent NCBI 429 rate limit errors)
+    if description_cache and bioproject_id in description_cache:
+        description = description_cache[bioproject_id]
+    elif description_cache is not None:
+        # Cache exists but ID missing — skip fetch to avoid 429 in parallel context
+        description = None
+    else:
+        description = fetch_bioproject_description(bioproject_id)
+    df['Description'] = description if description else ''
 
     df['Source_Database'] = source
     csv_path = output_dir / f"{bioproject_id}.processed.csv"
@@ -1184,7 +1470,7 @@ def process_single_bioproject(bioproject_id, output_dir, state_manager):
 
 
 def parallel_process_bioprojects(bioproject_list, output_dir, max_workers,
-                                  state_manager):
+                                  state_manager, description_cache=None):
     """Process multiple BioProjects in parallel."""
     print(f"\n{'='*70}")
     print(f"Processing {len(bioproject_list)} BioProjects (workers: {max_workers})")
@@ -1194,7 +1480,7 @@ def parallel_process_bioprojects(bioproject_list, output_dir, max_workers,
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(process_single_bioproject, bid, output_dir,
-                            state_manager): bid
+                            state_manager, description_cache): bid
             for bid in bioproject_list
         }
         for future in as_completed(futures):
@@ -1235,6 +1521,101 @@ def generate_status_report(all_ids, state_manager, output_dir):
     return status_df
 
 
+# ============================================================================
+# Post-merge Processing
+# ============================================================================
+
+def get_cncb_columns(df):
+    """Get columns between Submission and Source_Database (CNCB-origin columns)."""
+    cols = list(df.columns)
+    try:
+        start = cols.index('Submission') + 1
+        end = cols.index('Source_Database')
+        return cols[start:end] if start < end else []
+    except ValueError:
+        return []
+
+
+def deduplicate_cncb_columns(df):
+    """Clear CNCB cell values that duplicate core column values in the same row (vectorized)."""
+    cncb_cols = get_cncb_columns(df)
+    if not cncb_cols:
+        return df
+    core_cols = [c for c in CORE_COLUMNS if c in df.columns]
+    cleared = 0
+    for cncb_col in cncb_cols:
+        cncb_str = df[cncb_col].astype(str).str.strip()
+        cncb_notna = df[cncb_col].notna()
+        match_mask = pd.Series(False, index=df.index)
+        for core_col in core_cols:
+            core_str = df[core_col].astype(str).str.strip()
+            core_notna = df[core_col].notna()
+            match_mask = match_mask | (cncb_notna & core_notna & (cncb_str == core_str))
+        cleared += match_mask.sum()
+        df.loc[match_mask, cncb_col] = None
+    print(f"  CNCB dedup: cleared {cleared} duplicate cells")
+    return df
+
+
+def sort_columns_by_prefix_group(columns):
+    """Sort columns by CamelCase prefix groups, alphabetically within and between groups."""
+    if len(columns) <= 1:
+        return list(columns)
+
+    def get_prefix(name):
+        parts = re.split(r'(?<=[a-z])(?=[A-Z])|[\s_\-\.]+', name)
+        return parts[0].lower() if parts else name.lower()
+
+    groups = {}
+    for col in columns:
+        prefix = get_prefix(col)
+        groups.setdefault(prefix, []).append(col)
+
+    misc = []
+    real_groups = {}
+    for prefix, cols in groups.items():
+        if len(cols) == 1:
+            misc.append(cols[0])
+        else:
+            real_groups[prefix] = sorted(cols)
+
+    result = []
+    for prefix in sorted(real_groups.keys()):
+        result.extend(real_groups[prefix])
+
+    result.extend(sorted(misc))
+    return result
+
+
+def generate_column_description(df, output_dir, cncb_col_names=None):
+    """Generate column_description.tsv with metadata about each column."""
+    if cncb_col_names is None:
+        cncb_col_names = []
+    rows = []
+    bp_col = 'Bioproject' if 'Bioproject' in df.columns else None
+    for col in df.columns:
+        non_empty = df[col].notna().sum()
+        fill_rate = f"{non_empty / len(df) * 100:.1f}%"
+        if bp_col:
+            num_datasets = df.loc[df[col].notna(), bp_col].nunique()
+        else:
+            num_datasets = '-'
+        top = df[col].dropna().astype(str).value_counts().head(5)
+        top_str = '; '.join(f"{v}({c})" for v, c in top.items())
+        if col in CORE_COLUMNS:
+            col_type = 'core'
+        elif col in cncb_col_names:
+            col_type = 'cncb'
+        else:
+            col_type = 'rare'
+        rows.append([col, col_type, non_empty, fill_rate, num_datasets, top_str])
+    desc_df = pd.DataFrame(rows, columns=[
+        'ColumnName', 'Type', 'NonEmptyCount', 'FillRate', 'NumDatasets', 'TopValues'])
+    desc_file = Path(output_dir) / 'column_description.tsv'
+    desc_df.to_csv(desc_file, sep='\t', index=False)
+    print(f"  Column description: {desc_file}")
+
+
 def merge_all_results(results, output_dir, tmp_dir=None):
     """Merge all .processed.csv files into final output."""
     print(f"\n{'='*70}")
@@ -1265,15 +1646,124 @@ def merge_all_results(results, output_dir, tmp_dir=None):
 
     final_df = pd.concat(all_dfs, axis=0, ignore_index=True, sort=False)
 
-    # Reorder: priority columns first
-    first_cols = [c for c in PRIORITY_COLUMNS if c in final_df.columns]
-    other_cols = [c for c in final_df.columns if c not in PRIORITY_COLUMNS]
-    final_df = final_df[first_cols + other_cols]
+    # a. Separate records without Run info
+    if 'Run' in final_df.columns:
+        no_run_mask = final_df['Run'].isna() | (final_df['Run'].astype(str).str.strip() == '')
+        if no_run_mask.any():
+            no_run_df = final_df[no_run_mask]
+            no_run_file = Path(output_dir) / "RecordWithoutRUNinfo.csv"
+            no_run_df.to_csv(no_run_file, index=False, encoding='utf-8-sig')
+            print(f"  Separated {len(no_run_df)} records without Run → {no_run_file.name}")
+            final_df = final_df[~no_run_mask].reset_index(drop=True)
 
+    # b. Drop download/file path columns (not useful for analysis)
+    DROP_COLUMNS = ['DownloadPath', 'DownloadReadFile1', 'DownloadReadFile2',
+                    'ReadFilename1', 'ReadFilename2']
+    to_drop = [c for c in DROP_COLUMNS if c in final_df.columns]
+    if to_drop:
+        final_df = final_df.drop(columns=to_drop)
+        print(f"  Dropped {len(to_drop)} download/path columns: {', '.join(to_drop)}")
+
+    # c. CNCB column deduplication
+    cncb_col_names = get_cncb_columns(final_df)
+    final_df = deduplicate_cncb_columns(final_df)
+
+    # d. Remove empty columns
+    cols_before = len(final_df.columns)
+    final_df = final_df.dropna(axis=1, how='all')
+    removed = cols_before - len(final_df.columns)
+    if removed:
+        print(f"  Removed {removed} empty columns")
+    cncb_col_names = [c for c in cncb_col_names if c in final_df.columns]
+
+    # e. Merge LatLon into lat/lon columns
+    if 'LatLon' in final_df.columns:
+        def _parse_latlon(val):
+            """Parse 'lat_val N/S lon_val E/W' into (lat, lon) floats."""
+            s = str(val).strip()
+            if not s or s.lower() in ('nan', 'none', '', 'missing', 'unknown',
+                                       'not applicable', 'not collected'):
+                return None, None
+            # Remove degree symbols, commas; normalize whitespace
+            s = s.replace('°', ' ').replace(',', ' ')
+            m = re.findall(r'([\d.]+)\s*([NSEWnsew])', s)
+            if len(m) != 2:
+                return None, None
+            lat_val, lon_val = None, None
+            for num_str, direction in m:
+                try:
+                    num = float(num_str)
+                except ValueError:
+                    continue
+                d = direction.upper()
+                if d in ('N', 'S'):
+                    lat_val = num if d == 'N' else -num
+                elif d in ('E', 'W'):
+                    lon_val = num if d == 'E' else -num
+            return lat_val, lon_val
+
+        parsed = final_df['LatLon'].apply(_parse_latlon)
+        lat_vals = parsed.apply(lambda x: x[0])
+        lon_vals = parsed.apply(lambda x: x[1])
+
+        if 'lat' not in final_df.columns:
+            final_df['lat'] = lat_vals
+        else:
+            fill_mask = final_df['lat'].isna() & lat_vals.notna()
+            final_df.loc[fill_mask, 'lat'] = lat_vals[fill_mask]
+
+        if 'lon' not in final_df.columns:
+            final_df['lon'] = lon_vals
+        else:
+            fill_mask = final_df['lon'].isna() & lon_vals.notna()
+            final_df.loc[fill_mask, 'lon'] = lon_vals[fill_mask]
+
+        converted = lat_vals.notna().sum()
+        print(f"  LatLon → lat/lon: converted {converted} values")
+        final_df = final_df.drop(columns=['LatLon'])
+
+    # f. Merge FileSize into SizeMb (FileSize is bytes, SizeMb is megabytes)
+    if 'FileSize' in final_df.columns:
+        def _filesize_to_mb(val):
+            """Convert FileSize (bytes, possibly 'num|num') to MB as integer."""
+            s = str(val).strip()
+            if not s or s.lower() in ('nan', 'none', ''):
+                return None
+            try:
+                if '|' in s:
+                    parts = [int(p.strip()) for p in s.split('|') if p.strip()]
+                    return round(sum(parts) / 1_048_576)
+                else:
+                    return round(int(s) / 1_048_576)
+            except (ValueError, ZeroDivisionError):
+                return None
+
+        converted = final_df['FileSize'].apply(_filesize_to_mb)
+        if 'SizeMb' not in final_df.columns:
+            final_df['SizeMb'] = converted
+        else:
+            # Fill SizeMb where it's missing but FileSize has data
+            fill_mask = final_df['SizeMb'].isna() & converted.notna()
+            final_df.loc[fill_mask, 'SizeMb'] = converted[fill_mask]
+        filled = converted.notna().sum()
+        print(f"  FileSize → SizeMb: converted {filled} values")
+        final_df = final_df.drop(columns=['FileSize'])
+
+    # g. Reorder: core columns first, rare columns sorted by prefix group
+    core_cols = [c for c in CORE_COLUMNS if c in final_df.columns]
+    rare_cols = [c for c in final_df.columns if c not in CORE_COLUMNS]
+    rare_cols = sort_columns_by_prefix_group(rare_cols)
+    final_df = final_df[core_cols + rare_cols]
+
+    # h. Generate column description
+    generate_column_description(final_df, output_dir, cncb_col_names)
+
+    # i. Output
     final_file = Path(output_dir) / "all_metadata_merged.csv"
     final_df.to_csv(final_file, index=False, encoding='utf-8-sig')
 
     print(f"  Total records: {len(final_df)}")
+    print(f"  Total columns: {len(final_df.columns)} ({len(core_cols)} core + {len(rare_cols)} rare)")
     print(f"  Output: {final_file}")
     print('='*70)
 
@@ -1339,6 +1829,18 @@ def run_unified_pipeline(input_folder, output_folder, api_key=None, max_workers=
             groups['biosample'], tmp_path
         )
         if bs_df is not None and not bs_df.empty and validate_run_data(bs_df):
+            # Fetch descriptions for each unique BioProject found in BioSample data
+            if 'Bioproject' in bs_df.columns:
+                unique_bps = bs_df['Bioproject'].dropna().astype(str).unique()
+                bp_desc_map = {}
+                for bp in unique_bps:
+                    if bp and bp.startswith('PRJ'):
+                        bp_desc_map[bp] = fetch_bioproject_description(bp) or ''
+                        time.sleep(DEFAULT_REQUEST_DELAY)
+                bs_df['Description'] = bs_df['Bioproject'].astype(str).map(bp_desc_map).fillna('')
+            else:
+                bs_df['Description'] = ''
+
             bs_df['Source_Database'] = 'NCBI'
             csv_path = tmp_path / "BIOSAMPLE_INPUT.processed.csv"
             bs_df.to_csv(csv_path, index=False, encoding='utf-8')
@@ -1348,8 +1850,8 @@ def run_unified_pipeline(input_folder, output_folder, api_key=None, max_workers=
 
             # Mark individual BioSample IDs in state manager
             found_ids = set()
-            if 'BioSample' in bs_df.columns:
-                found_ids = set(bs_df['BioSample'].dropna().astype(str))
+            if 'Biosample' in bs_df.columns:
+                found_ids = set(bs_df['Biosample'].dropna().astype(str))
             for bid in groups['biosample']:
                 if bid in found_ids:
                     state_manager.mark_status(bid, STATUS_HAS_DATA)
@@ -1360,12 +1862,19 @@ def run_unified_pipeline(input_folder, output_folder, api_key=None, max_workers=
             for bid in groups['biosample']:
                 state_manager.mark_status(bid, STATUS_NO_DATA)
 
-    # Step 2: Process BioProjects
-    print("\n[Step 2] Processing BioProjects...")
+    # Step 2a: Pre-fetch all BioProject descriptions (serial, to respect rate limits)
     bioproject_ids = groups['cncb'] + groups['ncbi']
+    print(f"\n[Step 2a] Fetching descriptions for {len(bioproject_ids)} BioProjects...")
+    description_cache = {}
+    for bp_id in bioproject_ids:
+        description_cache[bp_id] = fetch_bioproject_description(bp_id) or ''
+    print(f"  Descriptions fetched: {sum(1 for v in description_cache.values() if v)}/{len(bioproject_ids)}")
+
+    # Step 2b: Process BioProjects
+    print("\n[Step 2b] Processing BioProjects...")
 
     results = parallel_process_bioprojects(
-        bioproject_ids, tmp_path, max_workers, state_manager
+        bioproject_ids, tmp_path, max_workers, state_manager, description_cache
     ) + biosample_results
 
     # Step 3: Status report
