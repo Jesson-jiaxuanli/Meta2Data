@@ -1,0 +1,149 @@
+\section*{DISCUSSION}
+
+The accumulation of publicly deposited microbiome amplicon sequencing data presents
+an enormous opportunity for integrative mega-analysis, yet realising this potential
+has been constrained by a set of recurring, interrelated barriers: the labour
+intensity of cross-study metadata harmonisation, the systematic exclusion of
+CNCB/GSA-archived data from existing retrieval tools, the inability of most
+workflows to reconcile datasets generated on disparate sequencing platforms or
+targeting different hypervariable regions, and the absence of a single pipeline
+that unifies all of these steps end-to-end.
+Meta2Data was designed to address each of these barriers within a single,
+largely automated workflow requiring only one round of human review throughout the
+entire process.
+
+\paragraph{Addressing the metadata integration barrier.}
+Metadata harmonisation remains one of the most time-consuming and error-prone
+steps in large-scale comparative microbiome studies, primarily because
+experimental-design heterogeneity across laboratories produces inconsistent field
+definitions and annotation standards even within databases that enforce submission
+guidelines~\citep{cernava2022metadata, kim2025fair, bustos2026nonstandardized}.
+The MetaDL module substantially reduces this burden by merging SRA RunInfo and
+BioSample attribute tables on shared identifiers in a single operation, automatically
+appending BioProject descriptions as a dedicated column, and enforcing a uniform
+CamelCase column-naming convention via a configurable synonym dictionary.
+The companion \texttt{column\_description.tsv} file---reporting per-column fill
+rate, dataset coverage, and the five most frequent values for every non-core
+field---allows users to rapidly characterise the annotation landscape of an assembled
+corpus without inspecting the full merged table.
+Primer information, which is frequently absent or inconsistently recorded in
+public submissions~\citep{kim2025fair}, is inferred automatically by the downstream
+AmpliconPIP module rather than sourced from metadata records, insulating the workflow
+from an inherently unreliable data field.
+Taken together, these features reduce the single mandatory human-review step to an
+exercise in filtering and column selection rather than field-by-field curation,
+substantially compressing the time required to prepare a metadata table that is ready
+for amplicon processing.
+
+\paragraph{Bridging the CNCB/GSA database coverage gap.}
+Perhaps the most consequential limitation of existing re-analysis workflows is
+their exclusive targeting of INSDC member databases.
+The Genome Sequence Archive (GSA) and GSA-Human portals of the China National Center
+for Bioinformation had archived more than 80~PB of data as of August 2025~\citep{cncb2026}, and the
+fraction of this archive that represents Asian microbiome cohorts---spanning gut,
+oral, and environmental niches that are systematically underrepresented in
+NCBI~SRA---makes its omission from integrative analyses a meaningful source of
+geographical and biological bias.
+Meta2Data is, to our knowledge, the first general-purpose re-analysis pipeline to
+support metadata retrieval and sequence download from both NCBI and CNCB/GSA
+within a unified interface, accepting BioProject identifiers from all major
+international prefixes (PRJNA, PRJEB, PRJDB, and PRJCA) interchangeably and without
+any user-side format conversion.
+This capability directly closes the coverage gap that affects established tools
+including NCBImeta~\citep{eaton2020ncbimeta}, Kingfisher~\citep{woodcroft2024kingfisher},
+MADAME~\citep{fumagalli2023madame}, and ffq~\citep{galvez2023ffq}, ensuring that
+cross-study analyses can incorporate the full breadth of globally deposited
+microbiome data.
+
+\paragraph{Automated cross-platform and cross-region amplicon processing.}
+The AmpliconPIP module addresses the platform heterogeneity barrier through two
+complementary mechanisms.
+First, all sequencing platform assignments are resolved in a single batched Entrez
+API query executed before parallel processing begins, preventing the rate-limit
+exhaustion that arises when each dataset issues independent platform queries at
+runtime.
+This cached assignment then routes each dataset to the appropriate denoising
+branch---DADA2 paired-end denoising for Illumina (with automatic fallback to
+single-end processing when paired-end retention falls below 50\%), DADA2 denoise-ccs
+for PacBio~SMRT long-amplicon data, DADA2 denoise-pyro for Ion~Torrent, and
+VSEARCH-based OTU clustering for legacy 454 datasets---without requiring any
+user-level platform specification.
+Second, the positional base-frequency matrix algorithm for primer identification
+removes the requirement for users to supply primer sequences, which has been
+identified as a persistent impediment to scalable automated re-analysis~\citep{regueira2023critical}.
+By classifying each of the first 60 read positions as conserved, degenerate, or
+variable and resolving primer termini from continuity of conserved/degenerate blocks,
+the algorithm identifies trimming sites with IUPAC-compatible matching across all 16S
+hypervariable regions from V1 to V9 and handles mixed-orientation libraries through
+bimodal base-distribution analysis.
+This design means that a single AmpliconPIP invocation can process datasets sequenced
+on different platforms and targeting different variable regions in the same run,
+which is a prerequisite for the kind of broad phylogenetic and biogeographical
+comparative analyses that motivate mega-analysis in the first place~\citep{xie2024global,cheng2025host}.
+
+\paragraph{Comparison with existing tools.}
+Table~\ref{tab:comparison} contextualises Meta2Data relative to the closest
+existing tools.
+NCBImeta~\citep{eaton2020ncbimeta} provides efficient structured-metadata retrieval
+from NCBI databases but performs no sequence download or bioinformatic processing.
+Kingfisher~\citep{woodcroft2024kingfisher} offers robust multi-strategy SRA data
+procurement but is limited to INSDC databases and produces only raw FASTQ files.
+ffq~\citep{galvez2023ffq} and MADAME~\citep{fumagalli2023madame} retrieve metadata
+with user-friendly interfaces yet similarly do not support CNCB/GSA access or
+downstream amplicon processing.
+q2-fondue~\citep{ziemski2022q2fondue}, the closest conceptual predecessor to
+Meta2Data, integrates metadata retrieval and SRA data import within the QIIME2
+framework; however, it does not support CNCB/GSA data, does not include automatic
+primer detection or cross-platform denoising, and requires a QIIME2 installation
+even for metadata-only operations.
+Meta2Data integrates all of these capabilities---cross-database metadata retrieval
+and standardisation, sequence download, platform-aware quality control, automatic
+primer detection and trimming, multi-platform denoising, taxonomy classification
+against three reference databases, and SEPP-based phylogenetic fragment
+insertion~\citep{mirarab2012sepp} into the GreenGenes2 reference
+tree~\citep{mcdonald2024greengenes2}---into a single modular pipeline that
+outputs QIIME2-compatible feature tables and taxonomy artefacts ready for
+downstream diversity analyses without any intermediate format conversion.
+Importantly, MetaDL is designed to operate on a bare Python~3 environment without
+requiring QIIME2, keeping the metadata curation step lightweight and decoupled from
+the amplicon-processing environment.
+
+\paragraph{Limitations.}
+Several limitations of the current implementation should be acknowledged.
+Meta2Data currently supports Linux operating systems only, restricting direct
+usability for Windows or macOS users.
+The ggCOMBO module is resource-intensive: the SEPP phylogenetic placement step
+requires approximately 70--100~GB of RAM and 20~CPU cores, which in practice
+necessitates access to high-performance computing infrastructure for datasets of
+non-trivial scale.
+The full workflow---from keyword search to final QIIME2 artefacts---can require
+one to two days, dominated by sequence download and phylogenetic tree construction.
+Oxford Nanopore Technology (ONT) long reads are not currently supported and are
+silently skipped.
+The automatic primer detection algorithm, while robust across standard 16S library
+preparations from V1 to V9, may encounter difficulties with highly non-standard
+protocols or with datasets in which primer sequences were removed upstream of
+database deposition.
+The pipeline is currently restricted to amplicon sequencing data; whole-genome
+shotgun (WGS) metagenomic datasets are outside its present scope.
+Finally, notwithstanding the substantial automation provided by MetaDL, one round of
+human review of the merged metadata table remains necessary to exclude off-target
+studies and verify sample-level annotations before amplicon processing, as no
+automated system can yet reliably resolve the semantic diversity of free-text
+experimental descriptions across heterogeneous BioProject submissions~\citep{bustos2026nonstandardized,kim2025fair}.
+
+\paragraph{Future directions.}
+Meta2Data is under active development as an open-source project hosted on GitHub.
+A fourth module, ShortreadsPIP, is currently in active development and will extend
+the pipeline's scope to whole-genome shotgun metagenomic data, encompassing
+read-level quality control, host decontamination, taxonomic profiling, and
+functional annotation, thereby enabling unified automated re-analysis of both
+amplicon and metagenomic datasets from the same public repositories.
+Support for Oxford Nanopore Technology reads is also planned as long-read
+sequencing becomes increasingly prevalent in microbiome research.
+We anticipate that the BioProject description column automatically populated by
+MetaDL---which provides a concise natural-language summary of each study's
+purpose, target organism, and experimental design---will serve as a productive
+interface for large-language-model-assisted metadata screening, potentially
+further reducing the sole remaining manual step and moving large-scale microbiome
+re-analysis closer to a fully automated paradigm.
