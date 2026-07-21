@@ -71,8 +71,21 @@ STATUS_NO_RUN = 'no_run_info'
 STATUS_DOWNLOAD_ERROR = 'download_error'
 STATUS_INVALID_FORMAT = 'invalid_format'
 
-COLUMN_RENAME_DICT = None
-COLUMN_RENAME_JSON_PATH = Path(__file__).parent.parent / "docs" / "NCBI_Biosample.json"
+# Two-part column-standardization module (replaces the old single-dict rename).
+# Lives in scripts/column_standardize/ and is imported by path so it works both
+# from the repo and from an installed share/ layout.
+sys.path.insert(0, str(Path(__file__).parent / "column_standardize"))
+try:
+    import column_merge
+    _dict_dir = Path(__file__).parent / "column_standardize"
+    # v2 = 旧字典 + 值指纹验证过的跨库同义词；缺失时回退到旧字典。
+    TWO_PART_DICT_PATH = _dict_dir / "biosample_canonical_v2.json"
+    if not TWO_PART_DICT_PATH.exists():
+        TWO_PART_DICT_PATH = _dict_dir / "biosample_canonical_dict.json"
+except Exception as _e:  # pragma: no cover - module should always be present
+    column_merge = None
+    TWO_PART_DICT_PATH = None
+    print(f"  Warning: column_standardize module unavailable: {_e}")
 
 
 # ============================================================================
@@ -83,19 +96,6 @@ def generate_fake_email():
     timestamp = str(int(time.time() / 86400))
     hash_val = hashlib.md5(timestamp.encode()).hexdigest()[:8]
     return f"meta2data_{hash_val}@research.example.com"
-
-
-def load_column_rename_dict():
-    global COLUMN_RENAME_DICT
-    if COLUMN_RENAME_DICT is None:
-        try:
-            with open(COLUMN_RENAME_JSON_PATH, 'r', encoding='utf-8') as f:
-                COLUMN_RENAME_DICT = json.load(f)
-            print(f"  Loaded {len(COLUMN_RENAME_DICT)} column rename rules")
-        except Exception as e:
-            print(f"  Warning: Failed to load column rename dict: {e}")
-            COLUMN_RENAME_DICT = {}
-    return COLUMN_RENAME_DICT
 
 
 def setup_entrez(api_key=None):
@@ -353,42 +353,25 @@ def clean_and_standardize_columns(df, source_prefix=None):
     return _apply_priority_order(df)
 
 
-def apply_column_rename_from_dict(df):
-    """Apply column renaming from NCBI_Biosample.json dictionary."""
-    rename_dict = load_column_rename_dict()
-    if not rename_dict:
-        return df
-
-    variant_to_standard = {}
-    for standard_name, variants in rename_dict.items():
-        for variant in variants:
-            variant_to_standard[variant.lower().strip()] = standard_name
-
-    rename_map = {}
-    for col in df.columns:
-        standard = variant_to_standard.get(col.lower().strip())
-        if standard and standard not in df.columns:
-            rename_map[col] = standard
-
-    if rename_map:
-        df = df.rename(columns=rename_map)
-        print(f"  Renamed {len(rename_map)} columns via dictionary")
-
-    return df
-
-
 def _to_camelcase(name):
     """Convert 'library_strategy' -> 'LibraryStrategy'."""
     parts = re.split(r'[\s_-]+', name.strip())
     return ''.join(part.capitalize() for part in parts if part)
 
 
-def apply_camelcase_normalization(df):
-    """Normalize column names to CamelCase. Merge duplicates intelligently."""
+def apply_camelcase_normalization(df, protect=None):
+    """Normalize column names to CamelCase. Merge duplicates intelligently.
+
+    `protect` — column names left untouched (e.g. 'Source_Database', a fixed column
+    the original pipeline adds after standardization and never camelcases).
+    """
+    protect = set(protect or ())
     rename_map = {}
     merge_needed = {}
 
     for col in df.columns:
+        if col in protect:
+            continue
         if ' ' in col or '_' in col or '-' in col:
             normalized = _to_camelcase(col)
             if normalized != col:
@@ -427,6 +410,39 @@ def apply_camelcase_normalization(df):
     return df
 
 
+def merge_case_variant_columns(df):
+    """合并仅大小写不同的同名列（NCBI 属性名本就大小写不敏感，如 'replicate' 与
+    'Replicate' 是同一属性）。保留首选大小写（有首字母大写者优先，否则先出现者），
+    值按行合并：优先保留列、非空补另一列、两边都非空且不同 -> 'a|b'。仅在存在
+    大小写重复时才动，不影响 host/age/sex 这类唯一的小写透传列。"""
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for c in df.columns:
+        groups[c.lower()].append(c)
+    merged_any = 0
+    for _low, cols in groups.items():
+        if len(cols) < 2:
+            continue
+        keep = next((c for c in cols if c[:1].isupper()), cols[0])
+        for c in cols:
+            if c == keep:
+                continue
+            out = []
+            for k, v in zip(df[keep], df[c]):
+                ks = '' if pd.isna(k) else str(k).strip()
+                vs = '' if pd.isna(v) else str(v).strip()
+                if ks and vs:
+                    out.append(ks if ks.lower() == vs.lower() else f"{ks}|{vs}")
+                else:
+                    out.append(ks or vs or None)
+            df[keep] = out
+            df = df.drop(columns=[c])
+            merged_any += 1
+    if merged_any:
+        print(f"  Merged {merged_any} case-variant duplicate columns")
+    return df
+
+
 DESIGN_DESCRIPTION_ALIASES = [
     'LibraryConstruction/ExperimentalDesign',
     'LibraryConstructionExperimentalDesign',
@@ -438,9 +454,15 @@ DESIGN_DESCRIPTION_ALIASES = [
 
 
 def standardize_columns(df):
-    """Apply all three column standardization steps."""
+    """Apply per-project column standardization (content detection + CamelCase).
+
+    NOTE: dictionary-based synonym merging was moved out of the per-project step.
+    It now runs once on the fully merged table via the two-part column_standardize
+    module (see merge_all_results), so the recommend co-occurrence rule can see the
+    whole dataset. The old apply_column_rename_from_dict (docs/NCBI_Biosample.json)
+    is superseded by that module's `direct` tier and is no longer called here.
+    """
     df = clean_and_standardize_columns(df)
-    df = apply_column_rename_from_dict(df)
     df = apply_camelcase_normalization(df)
 
     # Rename CNCB design column to DesignDescription
@@ -1802,22 +1824,57 @@ def merge_all_results(results, output_dir, tmp_dir=None):
         print(f"  FileSize → SizeMb: converted {filled} values")
         final_df = final_df.drop(columns=['FileSize'])
 
-    # g. Reorder: core columns first, rare columns sorted by prefix group
+    # g. Two-part dictionary standardization — DIRECT tier (auto-merge).
+    #    Runs once on the full merged table (replaces the old per-project dict
+    #    rename). RECOMMEND tier is not applied here — it only produces a review
+    #    table for the user (step j).
+    if column_merge is not None and TWO_PART_DICT_PATH and TWO_PART_DICT_PATH.exists():
+        cols_before = len(final_df.columns)
+        # Never rename MetaDL's own core columns (e.g. HostTaxonomyId -> host_taxid
+        # would clobber a field downstream steps rely on).
+        protected = set(CORE_COLUMNS) | {'Source_Database'}
+        final_df = column_merge.apply_direct(final_df, TWO_PART_DICT_PATH, protected=protected)
+        cncb_col_names = [c for c in cncb_col_names if c in final_df.columns]
+        if len(final_df.columns) != cols_before:
+            print(f"  Direct-merge: {cols_before} -> {len(final_df.columns)} columns")
+
+    # g2. Original-format display naming. The two-part dict now carries the
+    #     natural-language canonical (display_name) directly, so apply_direct above
+    #     renames columns to e.g. "geographic location"; camelcase then yields the
+    #     original Meta2Data column name ("GeographicLocation"). No second dict pass.
+    final_df = apply_camelcase_normalization(final_df, protect={'Source_Database'})
+    # 合并仅大小写不同的同名列（属性名大小写不敏感）
+    final_df = merge_case_variant_columns(final_df)
+    cncb_col_names = [c for c in cncb_col_names if c in final_df.columns]
+
+    # h. Reorder: core columns first, rare columns sorted by prefix group
     core_cols = [c for c in CORE_COLUMNS if c in final_df.columns]
     rare_cols = [c for c in final_df.columns if c not in CORE_COLUMNS]
     rare_cols = sort_columns_by_prefix_group(rare_cols)
     final_df = final_df[core_cols + rare_cols]
 
-    # h. Generate column description
+    # i. Generate column description
     generate_column_description(final_df, output_dir, cncb_col_names)
 
-    # i. Output
+    # j. Output
     final_file = Path(output_dir) / "all_metadata_merged.csv"
     final_df.to_csv(final_file, index=False, encoding='utf-8-sig')
 
     print(f"  Total records: {len(final_df)}")
     print(f"  Total columns: {len(final_df.columns)} ({len(core_cols)} core + {len(rare_cols)} rare)")
     print(f"  Output: {final_file}")
+
+    # k. Two-part dictionary standardization — RECOMMEND tier (review only).
+    #    Writes merge_recommendations.csv + merge_groups.txt; does NOT change data.
+    #    User edits merge_groups.txt then runs: MetaDL --apply-merges <file> -o <dir>
+    if column_merge is not None and TWO_PART_DICT_PATH and TWO_PART_DICT_PATH.exists():
+        try:
+            recommend_protected = set(CORE_COLUMNS) | {'Source_Database'}
+            column_merge.build_recommend_table(
+                final_df, TWO_PART_DICT_PATH, output_dir,
+                protected=recommend_protected)
+        except Exception as e:
+            print(f"  Warning: recommend-table generation failed: {e}")
     print('='*70)
 
     return final_df
@@ -2051,6 +2108,44 @@ def _assign_bioproject_descriptions(df):
         df['Description'] = ''
 
 
+def run_apply_merges(output_folder, groups_file):
+    """Phase B: apply user-edited column-merge groups to an existing merged CSV.
+
+    Reads <output_folder>/all_metadata_merged.csv, merges columns per the group
+    file (each line `target/member1/member2`), and writes
+    <output_folder>/all_metadata_merged.standardized.csv. No download happens.
+    """
+    if column_merge is None:
+        print("ERROR: column_standardize module unavailable; cannot apply merges")
+        return None
+
+    output_path = Path(output_folder)
+    merged_csv = output_path / "all_metadata_merged.csv"
+    if not merged_csv.exists():
+        print(f"ERROR: {merged_csv} not found. Run MetaDL first to produce it.")
+        return None
+    if not Path(groups_file).exists():
+        print(f"ERROR: merge-groups file not found: {groups_file}")
+        return None
+
+    print("\n" + "=" * 70)
+    print("APPLY COLUMN-MERGE GROUPS")
+    print("=" * 70)
+    print(f"Input : {merged_csv}")
+    print(f"Groups: {groups_file}")
+
+    df = pd.read_csv(merged_csv, low_memory=False)
+    n_before = len(df.columns)
+    out_df = column_merge.apply_user_groups(df, groups_file)
+
+    out_file = output_path / "all_metadata_merged.standardized.csv"
+    out_df.to_csv(out_file, index=False, encoding="utf-8-sig")
+    print(f"Columns: {n_before} -> {len(out_df.columns)}")
+    print(f"Output : {out_file}")
+    print("=" * 70 + "\n")
+    return out_df
+
+
 def run_unified_pipeline(input_folder, output_folder, api_key=None, max_workers=None):
     """Execute unified metadata download pipeline."""
     output_path = Path(output_folder)
@@ -2075,7 +2170,8 @@ def run_unified_pipeline(input_folder, output_folder, api_key=None, max_workers=
     print(f"Max Workers: {max_workers}")
     print("="*70)
 
-    load_column_rename_dict()
+    if column_merge is not None and TWO_PART_DICT_PATH and TWO_PART_DICT_PATH.exists():
+        print(f"  Column standardization dict: {TWO_PART_DICT_PATH.name}")
 
     # Step 1: Read and classify input IDs
     print("\n[Step 1] Reading input IDs...")
@@ -2244,8 +2340,16 @@ def main():
                         help='NCBI API key')
     parser.add_argument('-w', '--max-workers', type=int, default=None,
                         help='Max parallel workers')
+    parser.add_argument('--apply-merges', default=None, metavar='FILE',
+                        help='Phase B: apply an edited merge_groups.txt to an '
+                             'existing all_metadata_merged.csv in -o (no download)')
 
     args = parser.parse_args()
+
+    # Phase B: apply user-confirmed column merges, then exit (no download).
+    if args.apply_merges:
+        result = run_apply_merges(args.output, args.apply_merges)
+        sys.exit(0 if result is not None else 1)
 
     if args.keywords:
         if not args.field or not args.organism:

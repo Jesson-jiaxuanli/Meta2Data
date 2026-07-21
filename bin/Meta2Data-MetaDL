@@ -61,6 +61,11 @@ Optional options:
     -w, --max-workers NUM     Max parallel workers (default: 8 with key, 3 without)
     -h, --help                Show this help message
 
+Column-merge (Phase B) option:
+    --apply-merges FILE       Apply an edited merge_groups.txt to the existing
+                              all_metadata_merged.csv in -o (no download). Writes
+                              all_metadata_merged.standardized.csv. Requires -o.
+
 Input Format:
     The input directory should contain .txt files with BioProject IDs.
     Each file should have one BioProject ID per line.
@@ -72,11 +77,24 @@ Input Format:
 
 Output Files:
     Main outputs (in -o):
-      - all_metadata_merged.csv      Final merged dataset (NCBI + CNCB)
+      - all_metadata_merged.csv      Final merged dataset (NCBI + CNCB); direct-tier
+                                     dictionary column merges already applied
+      - merge_recommendations.csv    Recommended column merges to review (not applied)
+      - merge_groups.txt             Editable merge groups (target/member1/member2 per
+                                     line); edit then rerun with --apply-merges
+      - all_metadata_merged.standardized.csv  Produced by --apply-merges (Phase B)
       - status.tsv                   Per-ID download status
       - column_description.tsv       Per-column statistics
       - bioproject_absdesc.tsv       Per-BioProject publication info (PMID/PMC/DOI/abstract)
       - RecordWithoutRUNinfo.csv     Records without SRA Run info (only when present)
+
+Column standardization (two-tier):
+    After cleaning, MetaDL auto-applies DIRECT dictionary merges to
+    all_metadata_merged.csv, and writes RECOMMEND candidates (dict co-occurring +
+    internal column-vs-column reasoning) to merge_recommendations.csv and a
+    pre-filled merge_groups.txt. Edit merge_groups.txt (keep the lines you want,
+    format target/member1/member2, one group per line), then run:
+      Meta2Data MetaDL --apply-merges merge_groups.txt -o <same output dir>
 
     Keyword search mode (searched_keywords/):
       - combined_results.csv         Matched BioProjects
@@ -150,6 +168,7 @@ OUTPUT=""
 API_KEY=""
 MAX_WORKERS=""
 KEYWORDS=""
+APPLY_MERGES=""
 FIELD=()
 ORGANISM=()
 OPT=()
@@ -162,6 +181,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -o|--output)
             OUTPUT="$2"
+            shift 2
+            ;;
+        --apply-merges)
+            APPLY_MERGES="$2"
             shift 2
             ;;
         -k|--api-key)
@@ -220,6 +243,27 @@ if [[ -z "$OUTPUT" ]]; then
 fi
 
 mkdir -p "$OUTPUT"
+
+# Phase B: apply an edited merge_groups.txt to an existing all_metadata_merged.csv.
+# No download; just standardize columns per the user's confirmed merges.
+if [[ -n "$APPLY_MERGES" ]]; then
+    if [[ ! -f "$APPLY_MERGES" ]]; then
+        echo "Error: --apply-merges file not found: $APPLY_MERGES"
+        exit 1
+    fi
+    echo "=== Meta2Data MetaDL - APPLY MERGES MODE ==="
+    echo "Output directory: $OUTPUT"
+    echo "Merge groups:     $APPLY_MERGES"
+    echo "============================================"
+    echo ""
+    PYTHON_CMD=(
+        python3 "${SCRIPTS}/metadata_downloader.py"
+        --output "$OUTPUT"
+        --apply-merges "$APPLY_MERGES"
+    )
+    "${PYTHON_CMD[@]}"
+    exit $?
+fi
 
 if [[ "$KEYWORDS" == "true" ]]; then
     # Keywords mode

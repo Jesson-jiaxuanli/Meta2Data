@@ -1,0 +1,14 @@
+# 列名合并分组 —— 每行一组要合并的列，用 / 分隔。
+# 行首的列名是合并后【保留】的名字，其余列的单元格并入它；两边都非空且不同 -> 'a|b'。
+# 换行 = 新的一组。空行、以 # 开头的行都忽略。
+# 下面是自动推荐的候选，请【删掉你不想合并的行】，需要时可自行改列名/增删成员。
+# 编辑好后运行：Meta2Data MetaDL --apply-merges <本文件> -o <同一输出目录>
+#
+# 例：temperature/temp/water_temperature
+#
+description/DesignDescription/PublicDescription
+LibraryStrategy/Strategy
+LibraryLayout/Layout
+Platform.1/Platform.3/Platform.5/Platform.7
+LatitudeAndLongitude/LatitudeLongitude
+Platform.2/Platform.4/Platform.6

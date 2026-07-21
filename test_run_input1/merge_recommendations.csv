@@ -1,0 +1,11 @@
+﻿group_id,target,member,source,method,score,value_sim,freq,fill_rate
+D:description,description,DesignDescription,dict_recommend,tfidf_jw_fusion,0.8205,,36799,13.9%
+D:description,description,PublicDescription,dict_recommend,tfidf_jw_fusion,0.8022,,115,13.9%
+V0000,LibraryStrategy,Strategy,value_peer,name_propose_value_decide,,0.5,,13.9%
+V0001,LibraryLayout,Layout,value_peer,name_propose_value_decide,,0.5,,13.9%
+V0002,Platform.1,Platform.3,value_peer,name_propose_value_decide,,1.0,,13.9%
+V0002,Platform.1,Platform.5,value_peer,name_propose_value_decide,,1.0,,13.9%
+V0002,Platform.1,Platform.7,value_peer,name_propose_value_decide,,1.0,,13.9%
+V0003,LatitudeAndLongitude,LatitudeLongitude,value_peer,name_propose_value_decide,,0.5,,13.9%
+V0004,Platform.2,Platform.4,value_peer,name_propose_value_decide,,1.0,,13.9%
+V0004,Platform.2,Platform.6,value_peer,name_propose_value_decide,,1.0,,13.9%
