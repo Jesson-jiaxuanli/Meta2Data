@@ -73,6 +73,8 @@ STATUS_INVALID_FORMAT = 'invalid_format'
 
 COLUMN_RENAME_DICT = None
 COLUMN_RENAME_JSON_PATH = Path(__file__).parent.parent / "docs" / "NCBI_Biosample.json"
+COLUMN_FREQ = None
+COLUMN_FREQ_CSV_PATH = Path(__file__).parent.parent / "docs" / "alias_freq.csv"
 
 
 # ============================================================================
@@ -96,6 +98,21 @@ def load_column_rename_dict():
             print(f"  Warning: Failed to load column rename dict: {e}")
             COLUMN_RENAME_DICT = {}
     return COLUMN_RENAME_DICT
+
+
+def load_column_freq():
+    """Load char_fp -> corpus frequency for the conflict tie-break (docs/alias_freq.csv)."""
+    global COLUMN_FREQ
+    if COLUMN_FREQ is None:
+        COLUMN_FREQ = {}
+        try:
+            with open(COLUMN_FREQ_CSV_PATH, 'r', encoding='utf-8-sig') as f:
+                for row in csv.reader(f):
+                    if len(row) >= 2 and row[1].isdigit():
+                        COLUMN_FREQ[row[0]] = int(row[1])
+        except Exception as e:
+            print(f"  Warning: Failed to load alias freq: {e}")
+    return COLUMN_FREQ
 
 
 def setup_entrez(api_key=None):
@@ -353,8 +370,32 @@ def clean_and_standardize_columns(df, source_prefix=None):
     return _apply_priority_order(df)
 
 
+def _write_merge_log(rows):
+    """Append conflict-merge decisions to column_merge_log.csv (records what merged)."""
+    path = 'column_merge_log.csv'
+    header = not os.path.exists(path)
+    try:
+        with open(path, 'a', newline='', encoding='utf-8-sig') as f:
+            w = csv.writer(f)
+            if header:
+                w.writerow(['time', 'canonical', 'winner_kept_official_name',
+                            'reason', 'losers_kept_independent'])
+            ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            for canonical, winner, reason, losers in rows:
+                w.writerow([ts, canonical, winner, reason, ' | '.join(losers)])
+    except Exception as e:
+        print(f"  Warning: failed to write merge log: {e}")
+
+
 def apply_column_rename_from_dict(df):
-    """Apply column renaming from NCBI_Biosample.json dictionary."""
+    """Rename columns to NCBI_Biosample.json canonical names.
+
+    Conflict rule (module1, before results): when >=2 synonym columns of the
+    SAME canonical co-occur, only ONE takes the canonical name; the rest are
+    kept as independent columns. Winner priority:
+      1) a column whose name == the canonical main name, else
+      2) the column with the highest corpus frequency (docs/alias_freq.csv).
+    """
     rename_dict = load_column_rename_dict()
     if not rename_dict:
         return df
@@ -364,15 +405,39 @@ def apply_column_rename_from_dict(df):
         for variant in variants:
             variant_to_standard[variant.lower().strip()] = standard_name
 
-    rename_map = {}
+    # group current columns by the canonical they map to
+    groups = {}
     for col in df.columns:
         standard = variant_to_standard.get(col.lower().strip())
-        if standard and standard not in df.columns:
-            rename_map[col] = standard
+        if standard:
+            groups.setdefault(standard, []).append(col)
+
+    freq = load_column_freq()
+    def _fp(s):
+        return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
+    rename_map = {}
+    log_rows = []
+    for standard, cols in groups.items():
+        main = [c for c in cols if c.lower().strip() == standard.lower().strip()]
+        if main:                       # 1) 主名优先
+            winner, reason = main[0], 'main_name'
+        elif len(cols) == 1:
+            winner, reason = cols[0], 'single'
+        else:                          # 2) 频次兜底 (docs/alias_freq.csv)
+            winner = max(cols, key=lambda c: freq.get(_fp(c), 0))
+            reason = 'frequency'
+        # only the winner takes the canonical name; losers keep their original names
+        if winner != standard and standard not in df.columns:
+            rename_map[winner] = standard
+        if len(cols) > 1:
+            log_rows.append((standard, winner, reason, [c for c in cols if c != winner]))
 
     if rename_map:
         df = df.rename(columns=rename_map)
         print(f"  Renamed {len(rename_map)} columns via dictionary")
+    if log_rows:
+        _write_merge_log(log_rows)
 
     return df
 

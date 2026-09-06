@@ -37,8 +37,7 @@
   "GISAID accession": [
     "gisaid accession",
     "gisaid_accession",
-    "GISAID accession",
-    "GISAID Accession ID"
+    "GISAID accession"
   ],
   "GISAID virus name": [
     "gisaid_virus_name",
@@ -407,8 +406,7 @@
   "biological sample replicate": [
     "biological sample replicate",
     "samp rep biol",
-    "samp_rep_biol",
-    "biological_replicate"
+    "samp_rep_biol","biological_replicate"
   ],
   "biological status": [
     "biol_stat",
@@ -836,8 +834,7 @@
   ],
   "derived from": [
     "derived from",
-    "derived_from",
-    "sample derived from"
+    "derived_from"
   ],
   "dermatology disorder": [
     "dermatology_disord",
@@ -1055,8 +1052,7 @@
   ],
   "elevation": [
     "elev",
-    "elevation",
-    "geographic location (elevation)"
+    "elevation"
   ],
   "elevator count": [
     "elevator count",
@@ -1665,8 +1661,7 @@
     "country",
     "geographic origin",
     "geo loc name",
-    "geographic location (country and/or sea, region)",
-    "geographic location (region and locality)"
+    "geographic location (country and/or sea, region)"
   ],
   "gestation state": [
     "amniotic fluid/gestation state",
@@ -1816,8 +1811,7 @@
   ],
   "host anatomical part": [
     "host_anatomical_part",
-    "host anatomical part",
-    "anatomical_part"
+    "host anatomical part"
   ],
   "host animal breed": [
     "host_animal_breed",
@@ -2074,8 +2068,7 @@
     "host spec range",
     "host ids",
     "host taxonomy id",
-    "host specificity or range",
-    "TaxID"
+    "host specificity or range", "TaxID"
   ],
   "host tissue sampled": [
     "host_tissue_sampled",
@@ -2346,8 +2339,7 @@
     "environment (feature)",
     "env_local_scale",
     "env local scale",
-    "local scale environmental context",
-    "local environmental context"
+    "local scale environmental context"
   ],
   "location or room in facility": [
     "location in facility",
@@ -2453,8 +2445,7 @@
   ],
   "metagenome source": [
     "metagenome_source",
-    "metagenome source",
-    "metagenomic source"
+    "metagenome source"
   ],
   "methane": [
     "methane"
@@ -2999,8 +2990,7 @@
     "cons qty purchased"
   ],
   "race": [
-    "race",
-    "host_race"
+    "race"
   ],
   "radiation regimen": [
     "radiation regm",
@@ -3269,9 +3259,7 @@
   ],
   "sample name": [
     "sample name",
-    "sample_name",
-    "Sample title",
-    "SampleName"
+    "sample_name", "Sample title","SampleName"
   ],
   "sample pooling": [
     "samp_pooling",
@@ -3466,8 +3454,7 @@
     "serogroup"
   ],
   "serotype": [
-    "serotype",
-    "serotype (required for a seropositive sample)"
+    "serotype"
   ],
   "serovar": [
     "serovar"
@@ -4603,268 +4590,13 @@
     "xylene"
   ],
   "Bioproject": [
-    "Bioproject",
-    "Project accession",
-    "BioProject"
+    "Bioproject","Project accession","BioProject"
   ],
   "Organization": [
-    "Organization",
-    "Submitting organization",
-    "Submitter"
+    "Organization","Submitting organization","Submitter"
   ],
   "Run": [
-    "RUN",
-    "Run accession",
-    "SRA Run",
-    "Accession"
-  ],
-  "longitude": [
-    "longitude",
-    "geographic location (longitude)"
-  ],
-  "latitude": [
-    "latitude",
-    "geographic location (latitude)"
-  ],
-  "INSDC last update": [
-    "INSDC last update",
-    "ENA-LAST-UPDATE",
-    "ENA last update"
-  ],
-  "INSDC first public": [
-    "INSDC first public",
-    "ENA first public",
-    "ENA-FIRST-PUBLIC"
-  ],
-  "assembly software": [
-    "assembly software"
-  ],
-  "binning software": [
-    "binning software"
-  ],
-  "binning parameters": [
-    "binning parameters"
-  ],
-  "completeness score": [
-    "completeness score"
-  ],
-  "completeness software": [
-    "completeness software"
-  ],
-  "assembly quality": [
-    "assembly quality"
-  ],
-  "contamination score": [
-    "contamination score"
-  ],
-  "taxonomic identity marker": [
-    "taxonomic identity marker"
-  ],
-  "sequencing method": [
-    "sequencing method"
-  ],
-  "diagnostic_pcr_protocol_1": [
-    "diagnostic_pcr_protocol_1"
-  ],
-  "diagnostic_pcr_protocol_2": [
-    "diagnostic_pcr_protocol_2"
-  ],
-  "diagnostic_pcr_protocol_3": [
-    "diagnostic_pcr_protocol_3"
-  ],
-  "diagnostic_gene_name_3": [
-    "diagnostic_gene_name_3"
-  ],
-  "diagnostic_pcr_Ct_value_3": [
-    "diagnostic_pcr_Ct_value_3"
-  ],
-  "taxonomic classification": [
-    "taxonomic classification"
-  ],
-  "MAG coverage software": [
-    "MAG coverage software"
-  ],
-  "number of contigs": [
-    "number of contigs"
-  ],
-  "sequence_type": [
-    "sequence_type"
-  ],
-  "chip antibody": [
-    "chip antibody"
-  ],
-  "target gene": [
-    "target gene"
-  ],
-  "INSDC center name": [
-    "INSDC center name"
-  ],
-  "Submitter Id": [
-    "Submitter Id"
-  ],
-  "ENA-CHECKLIST": [
-    "ENA-CHECKLIST"
-  ],
-  "INSDC status": [
-    "INSDC status"
-  ],
-  "External Id": [
-    "External Id"
-  ],
-  "scientific_name": [
-    "scientific_name"
-  ],
-  "INSDC center alias": [
-    "INSDC center alias"
-  ],
-  "collecting institution": [
-    "collecting institution"
-  ],
-  "broker name": [
-    "broker name"
-  ],
-  "collector name": [
-    "collector name"
-  ],
-  "common name": [
-    "common name"
-  ],
-  "lineage/clade name": [
-    "lineage/clade name"
-  ],
-  "diagnostic_pcr_Ct_value_1": [
-    "diagnostic_pcr_Ct_value_1"
-  ],
-  "diagnostic_gene_name_1": [
-    "diagnostic_gene_name_1"
-  ],
-  "replicate": [
-    "replicate"
-  ],
-  "diagnostic_gene_name_2": [
-    "diagnostic_gene_name_2"
-  ],
-  "diagnostic_pcr_Ct_value_2": [
-    "diagnostic_pcr_Ct_value_2"
-  ],
-  "virus identifier": [
-    "virus identifier"
-  ],
-  "definition for seropositive sample": [
-    "definition for seropositive sample"
-  ],
-  "GUNC clade separation score": [
-    "GUNC clade separation score"
-  ],
-  "GUNC contamination score": [
-    "GUNC contamination score"
-  ],
-  "GUNC reference representation score": [
-    "GUNC reference representation score"
-  ],
-  "GUNC version": [
-    "GUNC version"
-  ],
-  "SPIRE genome cluster": [
-    "SPIRE genome cluster"
-  ],
-  "SPIRE genome id": [
-    "SPIRE genome id"
-  ],
-  "contig N50": [
-    "contig N50"
-  ],
-  "derived from assembly": [
-    "derived from assembly"
-  ],
-  "linked to SPIRE sample": [
-    "linked to SPIRE sample"
-  ],
-  "linked to SPIRE study": [
-    "linked to SPIRE study"
-  ],
-  "linked to analysis project": [
-    "linked to analysis project"
-  ],
-  "taxonomic classification software": [
-    "taxonomic classification software"
-  ],
-  "brain region": [
-    "brain region"
-  ],
-  "ArrayExpress-SPECIES": [
-    "ArrayExpress-SPECIES"
-  ],
-  "gap_parent_phs": [
-    "gap_parent_phs"
-  ],
-  "Sampling Strategy": [
-    "Sampling Strategy"
-  ],
-  "receipt date": [
-    "receipt date"
-  ],
-  "metagenomic": [
-    "metagenomic"
-  ],
-  "subject id": [
-    "subject id"
-  ],
-  "environmental-sample": [
-    "environmental-sample"
-  ],
-  "individual": [
-    "individual"
-  ],
-  "organism": [
-    "organism"
-  ],
-  "cemba_id": [
-    "cemba_id"
-  ],
-  "collection_timestamp": [
-    "collection_timestamp"
-  ],
-  "time": [
-    "time"
-  ],
-  "physical_specimen_location": [
-    "physical_specimen_location"
-  ],
-  "dna_extracted": [
-    "dna_extracted"
-  ],
-  "physical_specimen_remaining": [
-    "physical_specimen_remaining"
-  ],
-  "habitat": [
-    "habitat"
-  ],
-  "batch": [
-    "batch"
-  ],
-  "identifier_affiliation": [
-    "identifier_affiliation"
-  ],
-  "tolid": [
-    "tolid"
-  ],
-  "GAL": [
-    "GAL"
-  ],
-  "GAL_sample_id": [
-    "GAL_sample_id"
-  ],
-  "tmp": [
-    "tmp"
-  ],
-  "specimen_id": [
-    "specimen_id"
-  ],
-  "potential_contaminant": [
-    "potential_contaminant"
-  ],
-  "sample_id": [
-    "sample_id"
+    "RUN","Run accession","SRA Run", "Accession"
   ]
+
 }
