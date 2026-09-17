@@ -1,0 +1,244 @@
+﻿field,dict_canonical,occurrence_count,category
+geo_loc_name,geographic location,24014252,Geography
+collection_date,collection date,23697702,Time
+isolation_source,isolation source,16915243,Sample
+isolate,isolate,14926099,Sample
+sample name,sample name,14532563,Admin
+INSDC center name,INSDC center name,14431765,Admin
+Submitter Id,Submitter Id,14376720,Admin
+ENA-CHECKLIST,ENA-CHECKLIST,14295165,Admin
+host,host,14042343,Host
+INSDC status,INSDC status,13776097,Admin
+study name,study name,13200391,Admin
+gap_accession,gap accession,13199605,Admin
+gap_sample_id,gap sample id,13199575,Admin
+gap_subject_id,gap subject id,13199575,Admin
+submitter handle,submitter handle,13199145,Admin
+biospecimen repository,biospecimen repository,13199145,Admin
+submitted sample id,submitted sample id,13199123,Admin
+submitted subject id,submitted subject id,13199117,Admin
+biospecimen repository sample id,biospecimen repository sample id,13199115,Admin
+sex,sex,13064536,Host
+lat_lon,latitude and longitude,13048975,Geography
+study design,study design,12495997,Admin
+geographic location (country and/or sea),geographic location,12173524,Geography
+collection date,collection date,11777814,Time
+gap_consent_code,gap consent code,11220611,Admin
+gap_consent_short_name,gap consent short name,11087799,Admin
+INSDC last update,INSDC last update,10370452,Admin
+External Id,External Id,10368571,Admin
+INSDC first public,INSDC first public,9474563,Admin
+ENA first public,INSDC first public,9062191,Admin
+scientific_name,scientific_name,8972534,Sample
+tissue,tissue,8421374,Sample
+analyte type,analyte type,8091083,Sample
+collected_by,collected by,8082296,Admin
+strain,strain,7444330,Sample
+INSDC center alias,INSDC center alias,6865361,Admin
+body site,tissue,6846076,Sample
+host_disease,host disease,6268850,Host
+age,age,5992413,Host
+host scientific name,host,5980641,Host
+geographic location (region and locality),geographic location,5804997,Geography
+collecting institution,collecting institution,5693164,Admin
+source_name,source name,5692438,Sample
+broker name,broker name,5546151,Admin
+is tumor,is tumor,5231623,Host
+ENA-LAST-UPDATE,INSDC last update,5229723,Admin
+sample capture status,sample capture status,5229662,Sample
+ENA-FIRST-PUBLIC,INSDC first public,5192072,Admin
+host subject id,host subject id,4777602,Host
+ENA last update,INSDC last update,4734714,Admin
+host health state,host health state,4704462,Host
+host common name,host common name,4670286,Host
+host sex,host sex,4545958,Host
+collector name,collector name,4461306,Admin
+geographic location (longitude),longitude,4454015,Geography
+geographic location (latitude),latitude,4453534,Geography
+project name,project name,4357432,Admin
+env_broad_scale,broad-scale environmental context,3952427,Environment
+common name,common name,3906571,Sample
+env_medium,environmental medium,3888006,Environment
+env_local_scale,local-scale environmental context,3887892,Environment
+subject is affected,subject is affected,3318585,Host
+histological type,histological type,3289371,Host
+host_age,host age,3222173,Host
+host_sex,host sex,3192373,Host
+dev_stage,development stage,2998784,Host
+environmental medium,environmental medium,2919943,Environment
+broad-scale environmental context,broad-scale environmental context,2919602,Environment
+sample derived from,derived from,2914227,Sample
+local environmental context,local-scale environmental context,2882079,Environment
+purpose_of_sequencing,purpose of sequencing,2826657,Sequencing
+metagenomic source,metagenome source,2806766,Sample
+assembly software,assembly software,2744402,Assembly
+binning software,binning software,2733555,Assembly
+binning parameters,binning parameters,2733447,Assembly
+sample_type,sample type,2680175,Sample
+treatment,treatment,2678466,Sample
+completeness score,completeness score,2658848,Assembly
+completeness software,completeness software,2652741,Assembly
+assembly quality,assembly quality,2628046,Assembly
+contamination score,contamination score,2616295,Assembly
+taxonomic identity marker,taxonomic identity marker,2602094,Assembly
+biomaterial_provider,biomaterial provider,2468961,Admin
+molecular data type,molecular data type,2461150,Sequencing
+collection_method,collection method ,2337778,Admin
+genotype,genotype,2326099,Sample
+cultivar,cultivar,2282241,Sample
+cell type,cell type,2243758,Sample
+collection_device,collection device,2146295,Admin
+Isolate,isolate,2110794,Sample
+ecotype,ecotype,2080472,Sample
+sequencing method,sequencing method,2067162,Sequencing
+lineage/clade name,lineage/clade name,2037602,Sample
+diagnostic_pcr_protocol_1,diagnostic_pcr_protocol_1,2036700,Diagnostic
+diagnostic_pcr_Ct_value_1,diagnostic_pcr_Ct_value_1,2036582,Diagnostic
+host_race,race,2008438,Host
+investigation type,investigation type,1986620,Sequencing
+depth,depth,1694082,Geography
+diagnostic_gene_name_1,diagnostic_gene_name_1,1689613,Diagnostic
+sequenced_by,sequenced by,1621432,Admin
+replicate,replicate,1548070,Sequencing
+study disease,study disease,1520662,Host
+diagnostic_pcr_protocol_2,diagnostic_pcr_protocol_2,1511863,Diagnostic
+diagnostic_pcr_protocol_3,diagnostic_pcr_protocol_3,1511863,Diagnostic
+diagnostic_gene_name_2,diagnostic_gene_name_2,1511786,Diagnostic
+diagnostic_gene_name_3,diagnostic_gene_name_3,1511786,Diagnostic
+diagnostic_pcr_Ct_value_2,diagnostic_pcr_Ct_value_2,1511762,Diagnostic
+diagnostic_pcr_Ct_value_3,diagnostic_pcr_Ct_value_3,1511761,Diagnostic
+virus identifier,virus identifier,1443435,Sample
+breed,breed,1354682,Sample
+sample_name,sample name,1287089,Admin
+serotype (required for a seropositive sample),serotype,1265863,Sample
+definition for seropositive sample,definition for seropositive sample,1264371,Host
+taxonomic classification,taxonomic classification,1211301,Assembly
+project_name,project name,1187952,Admin
+Sex,sex,1185606,Host
+source_material_id,source material identifiers,1168630,Admin
+MAG coverage software,MAG coverage software,1153584,Assembly
+environment (biome),broad-scale environmental context,1076494,Environment
+cell line,cell line,1068965,Sample
+environment (feature),local-scale environmental context,1067760,Environment
+serovar,serovar,1050189,Sample
+environment (material),environmental medium,1042375,Environment
+number of contigs,number of contigs,1019474,Assembly
+GUNC clade separation score,GUNC clade separation score,1019328,Assembly
+GUNC contamination score,GUNC contamination score,1019328,Assembly
+GUNC reference representation score,GUNC reference representation score,1019328,Assembly
+GUNC version,GUNC version,1019328,Assembly
+SPIRE genome cluster,SPIRE genome cluster,1019328,Assembly
+SPIRE genome id,SPIRE genome id,1019328,Assembly
+contig N50,contig N50,1019328,Assembly
+derived from assembly,derived from assembly,1019328,Assembly
+linked to SPIRE sample,linked to SPIRE sample,1019328,Assembly
+linked to SPIRE study,linked to SPIRE study,1019328,Assembly
+linked to analysis project,linked to analysis project,1019328,Assembly
+taxonomic classification software,taxonomic classification software,1019328,Assembly
+gisaid_virus_name,GISAID virus name,1007375,Sample
+organism part,tissue,1002488,Sample
+host_subject_id,host subject id,990885,Host
+brain region,brain region,986070,Host
+isol_growth_condt,isolation and growth condition,980312,Sequencing
+ArrayExpress-SPECIES,ArrayExpress-SPECIES,948611,Sample
+gap_parent_phs,gap_parent_phs,870993,Admin
+gender,sex,842901,Host
+Sample Name,sample name,832934,Admin
+elev,elevation,809119,Geography
+source_type,source type,785826,Sample
+purpose_of_sampling,purpose of sampling,781732,Sequencing
+cell_line,cell line,767993,Sample
+isolate_name_alias,isolate name alias,751278,Sample
+env_material,environmental medium,742966,Environment
+samp_collect_device,sample collection device or method,724780,Admin
+Sampling Strategy,Sampling Strategy,687063,Sequencing
+isolation source,isolation source,686844,Sample
+disease,disease,670416,Host
+env_biome,broad-scale environmental context,665061,Environment
+developmental stage,development stage,665002,Host
+receipt date,receipt date,644768,Admin
+gisaid_accession,GISAID accession,601945,Admin
+specimen_voucher,specimen voucher,583610,Admin
+env_feature,local-scale environmental context,575819,Environment
+samp_size,sample size,558334,Sample
+ref_biomaterial,reference for biomaterial,552444,Admin
+samp_mat_process,sample material processing,548924,Sequencing
+metagenomic,metagenomic,547195,Sample
+subject id,subject id,539615,Host
+environmental-sample,environmental-sample,533517,Sample
+cell_type,cell type,526728,Sample
+metagenome-source,metagenome source,520220,Sample
+sample-type,sample type,492282,Sample
+elevation,elevation,462395,Geography
+host age,host age,454553,Host
+SUBJECT_ID,subject id,439887,Host
+individual,individual,406097,Host
+identified_by,identified by,402653,Admin
+host description,host description,391182,Host
+sample type,sample type,388277,Sample
+phenotype,phenotype,385008,Host
+host_tissue_sampled,host tissue sampled,376758,Sample
+num_replicons,number of replicons,368983,Assembly
+derived-from,derived from,365787,Sample
+temp,temperature,358836,Environment
+scientific name,scientific_name,350753,Sample
+organism,organism,348731,Sample
+longitude,longitude,346186,Geography
+latitude,latitude,345872,Geography
+ArrayExpress-Species,ArrayExpress-SPECIES,343985,Sample
+cemba_id,cemba_id,320568,Admin
+disease state,disease,319869,Host
+altitude,altitude,315895,Geography
+collection_timestamp,collection_timestamp,296874,Time
+rel_to_oxygen,relationship to oxygen,294870,Sample
+population,population,294132,Host
+time,time,291247,Time
+physical_specimen_location,physical_specimen_location,288551,Admin
+dna_extracted,dna_extracted,282384,Sequencing
+physical_specimen_remaining,physical_specimen_remaining,281433,Admin
+host_taxid,host taxonomy ID,279773,Host
+ethnicity,ethnicity,277671,Host
+host taxid,host taxonomy ID,262644,Host
+GISAID Accession ID,GISAID accession,258877,Admin
+host_common_name,host common name,258500,Host
+body_product,body product,256019,Sample
+habitat,habitat,251171,Environment
+geographic location (elevation),elevation,250661,Geography
+batch,batch,247563,Admin
+Replicate,replicate,246904,Sequencing
+anatomical_part,host anatomical part,234758,Sample
+identifier_affiliation,identifier_affiliation,233664,Admin
+tolid,tolid,233383,Admin
+GAL,GAL,232540,Admin
+GAL_sample_id,GAL_sample_id,231745,Admin
+country,geographic location,228444,Geography
+lifestage,life stage,227787,Host
+host_body_product,host body product,227187,Sample
+ww_sample_duration,wastewater sample duration,225405,Time
+ww_sample_matrix,wastewater sample matrix,225381,Sample
+ww_sample_type,wastewater sample type,225381,Sample
+ww_population,wastewater population,225376,Host
+food_origin,food product origin geographic location,225259,Geography
+ww_surv_target_1,wastewater surveillance target 1,225091,Diagnostic
+ww_surv_target_1_known_present,wastewater surveillance target 1 known present,225078,Diagnostic
+tmp,tmp,224194,Admin
+env feature,local-scale environmental context,223015,Environment
+timepoint,timepoint,222481,Time
+env biome,broad-scale environmental context,222398,Environment
+sample description,description,221967,Admin
+serotype,serotype,219706,Sample
+ploidy,ploidy,209070,Assembly
+env package,environmental package,207799,Admin
+sequence_type,sequence_type,207124,Sequencing
+host_life_stage,host life stage,206243,Host
+culture_collection,culture collection,206201,Admin
+geo loc name,geographic location,205924,Geography
+derived_from,derived from,205520,Sample
+chip antibody,chip antibody,204801,Sequencing
+purpose_of_ww_sampling,purpose of wastewater sampling,201832,Sequencing
+specimen_id,specimen_id,201544,Admin
+potential_contaminant,potential_contaminant,201410,Sequencing
+target gene,target gene,200865,Sequencing
+sample_id,sample_id,199686,Admin
+host_genotype,host genotype,194417,Host
+disease_stage,disease stage,193206,Host
